@@ -1,0 +1,18 @@
+{
+    "name": "laboiteacode/monitor-php",
+    "description": "Framework-agnostic PHP core for LaravelMonitor clients (Laravel, Symfony, WordPress).",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "ext-sodium": "*",
+        "ext-curl": "*",
+        "psr/log": "^1.0 || ^2.0 || ^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "LaBoiteACode\\Monitor\\": "src/"
+        }
+    },
+    "minimum-stability": "stable"
+}

@@ -1,0 +1,85 @@
+<?php
+
+namespace LaBoiteACode\Monitor;
+
+use LaBoiteACode\Monitor\Http\HttpClient;
+use LaBoiteACode\Monitor\Payload\ExceptionPayloadBuilder;
+use LaBoiteACode\Monitor\Support\Scrubber;
+use Psr\Log\LoggerInterface;
+use Throwable;
+
+/**
+ * The platform-neutral client. Adapters (Laravel, Symfony, WordPress) wire it to
+ * the host's exception/logging hooks. Reporting never throws — monitoring must
+ * not break the host application.
+ */
+class Reporter
+{
+    public function __construct(
+        private readonly Config $config,
+        private readonly HttpClient $http,
+        private readonly Scrubber $scrubber,
+        private readonly ExceptionPayloadBuilder $builder,
+        private readonly ?LoggerInterface $logger = null,
+    ) {}
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    public function reportException(Throwable $e, array $context = []): bool
+    {
+        $payload = $this->builder->build($e, $context);
+        $payload['context'] = $this->scrubber->scrub($payload['context']);
+
+        return $this->post('/api/v1/ingest', $payload, 'exception');
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $logs
+     */
+    public function sendLogs(array $logs): bool
+    {
+        if ($logs === []) {
+            return true;
+        }
+
+        return $this->post('/api/v1/logs', ['logs' => $this->scrubber->scrub($logs)], 'logs');
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $packages
+     */
+    public function sendDependencies(array $packages): bool
+    {
+        if ($packages === []) {
+            return false;
+        }
+
+        return $this->post('/api/v1/dependencies', ['packages' => $packages], 'dependencies');
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function post(string $path, array $payload, string $kind): bool
+    {
+        if (! $this->config->isConfigured()) {
+            return false;
+        }
+
+        try {
+            $status = $this->http->postJson(
+                rtrim($this->config->url, '/').$path,
+                $this->config->key,
+                $payload,
+                $this->config->timeout,
+            );
+
+            return $status >= 200 && $status < 300;
+        } catch (Throwable $e) {
+            $this->logger?->warning("Monitor: failed to send {$kind}", ['error' => $e->getMessage()]);
+
+            return false;
+        }
+    }
+}
