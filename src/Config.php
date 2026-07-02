@@ -16,7 +16,7 @@ class Config
         public readonly int $timeout = 3,
         public readonly ?string $release = null,
         public readonly array $environments = [],
-        public readonly int $traceLimit = 50,
+        public readonly int $traceLimit = 0,
     ) {}
 
     public function isConfigured(): bool

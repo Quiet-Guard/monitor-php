@@ -10,7 +10,7 @@ use Throwable;
 class ExceptionPayloadBuilder
 {
     public function __construct(
-        private readonly int $traceLimit = 50,
+        private readonly int $traceLimit = 0,
         private readonly ?string $release = null,
     ) {}
 
@@ -42,7 +42,11 @@ class ExceptionPayloadBuilder
     {
         $frames = [];
 
-        foreach (array_slice($e->getTrace(), 0, $this->traceLimit) as $frame) {
+        $trace = $this->traceLimit > 0
+            ? array_slice($e->getTrace(), 0, $this->traceLimit)
+            : $e->getTrace();
+
+        foreach ($trace as $frame) {
             $frames[] = [
                 'class' => $frame['class'] ?? null,
                 'type' => $frame['type'] ?? null,
