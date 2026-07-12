@@ -3,6 +3,24 @@
     "description": "Framework-agnostic PHP core for LaravelMonitor clients (Laravel, Symfony, WordPress).",
     "type": "library",
     "license": "MIT",
+    "keywords": [
+        "monitoring",
+        "error-tracking",
+        "exceptions",
+        "logging",
+        "php"
+    ],
+    "authors": [
+        {
+            "name": "La boite a code",
+            "email": "alexandre@laboiteacode.fr"
+        }
+    ],
+    "homepage": "https://github.com/La-boite-a-code/LaravelMonitor",
+    "support": {
+        "issues": "https://github.com/La-boite-a-code/LaravelMonitor/issues",
+        "source": "https://github.com/La-boite-a-code/LaravelMonitor"
+    },
     "require": {
         "php": "^8.2",
         "ext-sodium": "*",
@@ -14,5 +32,6 @@
             "LaBoiteACode\\Monitor\\": "src/"
         }
     },
-    "minimum-stability": "stable"
+    "minimum-stability": "stable",
+    "prefer-stable": true
 }
