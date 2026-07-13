@@ -10,18 +10,24 @@ use Throwable;
 
 /**
  * The platform-neutral client. Adapters (Laravel, Symfony, WordPress) wire it to
- * the host's exception/logging hooks. Reporting never throws — monitoring must
+ * the host's exception/logging hooks. Reporting never throws: monitoring must
  * not break the host application.
  */
 class Reporter
 {
+    private readonly ExceptionPayloadBuilder $builder;
+
     public function __construct(
         private readonly Config $config,
         private readonly HttpClient $http,
         private readonly Scrubber $scrubber,
-        private readonly ExceptionPayloadBuilder $builder,
+        ?ExceptionPayloadBuilder $builder = null,
         private readonly ?LoggerInterface $logger = null,
-    ) {}
+    ) {
+        // Default to a builder wired from the Config, so release and traceLimit
+        // set there apply without hand-constructing an ExceptionPayloadBuilder.
+        $this->builder = $builder ?? new ExceptionPayloadBuilder($config->traceLimit, $config->release);
+    }
 
     /**
      * @param  array<string, mixed>  $context

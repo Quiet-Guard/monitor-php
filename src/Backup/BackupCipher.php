@@ -10,7 +10,7 @@ use RuntimeException;
  * A random symmetric key encrypts the archive with libsodium's secretstream
  * (chunked AEAD), and that key is sealed to the team's X25519 public key. The
  * server only ever stores the opaque result. Restoring requires the team's
- * private key, unwrapped locally from the passphrase — mirroring the server's
+ * private key, unwrapped locally from the passphrase, mirroring the server's
  * Argon2id/secretbox wrapping so the operator is never in the loop.
  *
  * Blob layout: [uint32 sealedKeyLen][sealedKey][24-byte header]([uint32 len][chunk])*
@@ -79,29 +79,43 @@ class BackupCipher
         sodium_memzero($symKey);
 
         $out = $this->open($outPath, 'wb');
+        $final = false;
 
-        while (! feof($in)) {
-            $lenBytes = fread($in, 4);
+        try {
+            while (! feof($in)) {
+                $lenBytes = fread($in, 4);
 
-            if ($lenBytes === '' || strlen($lenBytes) < 4) {
-                break;
+                if ($lenBytes === false || strlen($lenBytes) < 4) {
+                    break;
+                }
+
+                $cipher = $this->readChunk($in, unpack('N', $lenBytes)[1]);
+                $result = sodium_crypto_secretstream_xchacha20poly1305_pull($state, $cipher);
+
+                if ($result === false) {
+                    throw new RuntimeException('Backup is corrupted or has been tampered with.');
+                }
+
+                [$message, $tag] = $result;
+                fwrite($out, $message);
+
+                if ($tag === SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL) {
+                    $final = true;
+                    break;
+                }
             }
 
-            $cipher = $this->readChunk($in, unpack('N', $lenBytes)[1]);
-            $result = sodium_crypto_secretstream_xchacha20poly1305_pull($state, $cipher);
-
-            if ($result === false) {
-                fclose($in);
-                fclose($out);
-                throw new RuntimeException('Backup is corrupted or has been tampered with.');
+            // encryptFile() always closes the stream with a FINAL-tagged chunk, so
+            // reaching EOF without it means the blob was cut at a frame boundary.
+            if (! $final) {
+                throw new RuntimeException('Truncated backup blob.');
             }
+        } catch (RuntimeException $e) {
+            fclose($in);
+            fclose($out);
+            @unlink($outPath);
 
-            [$message, $tag] = $result;
-            fwrite($out, $message);
-
-            if ($tag === SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL) {
-                break;
-            }
+            throw $e;
         }
 
         fclose($in);

@@ -4,12 +4,16 @@ namespace LaBoiteACode\Monitor\Support;
 
 /**
  * Masks sensitive values by key, recursively. Framework-agnostic.
+ *
+ * Matching is by lower-cased substring, so a configured "password" also masks
+ * "user_password" and "PASSWORD_CONFIRMATION": derived key names must never
+ * leak just because the exact spelling was not listed.
  */
 class Scrubber
 {
-    public const MASK = '[FILTERED]';
+    public const MASK = '[scrubbed]';
 
-    /** @var array<int, string> lower-cased keys to mask */
+    /** @var array<int, string> lower-cased needles to mask */
     private array $keys;
 
     /**
@@ -27,8 +31,8 @@ class Scrubber
     public function scrub(array $data): array
     {
         foreach ($data as $key => $value) {
-            if (is_string($key) && in_array(strtolower($key), $this->keys, true)) {
-                $data[$key] = self::MASK;
+            if (is_string($key) && $this->matches(strtolower($key))) {
+                $data[$key] = static::MASK;
 
                 continue;
             }
@@ -39,5 +43,16 @@ class Scrubber
         }
 
         return $data;
+    }
+
+    private function matches(string $key): bool
+    {
+        foreach ($this->keys as $needle) {
+            if ($needle !== '' && str_contains($key, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

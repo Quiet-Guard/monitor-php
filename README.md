@@ -16,8 +16,25 @@ to build a client for another platform or for a plain-PHP application.
 
 ## Installation
 
+The package is not published on Packagist yet. Once it is, installing will be a
+plain `composer require laboiteacode/monitor-php`.
+
+Until then, install it from a clone of the monorepo using a path repository:
+
 ```bash
-composer require laboiteacode/monitor-php
+git clone https://github.com/La-boite-a-code/LaravelMonitor.git
+```
+
+```json
+{
+    "repositories": [
+        { "type": "path", "url": "../LaravelMonitor/packages/monitor-php", "options": { "versions": { "laboiteacode/monitor-php": "0.1.0" } } }
+    ]
+}
+```
+
+```bash
+composer require laboiteacode/monitor-php:^0.1
 ```
 
 ## What it provides
@@ -40,7 +57,6 @@ Wire a reporter and register the global handlers (plain-PHP host):
 use LaBoiteACode\Monitor\Config;
 use LaBoiteACode\Monitor\ErrorHandler;
 use LaBoiteACode\Monitor\Http\CurlHttpClient;
-use LaBoiteACode\Monitor\Payload\ExceptionPayloadBuilder;
 use LaBoiteACode\Monitor\Reporter;
 use LaBoiteACode\Monitor\Support\Scrubber;
 
@@ -50,14 +66,13 @@ $config = new Config(
     timeout: 3,
     release: null,          // e.g. a git SHA
     environments: [],       // report from every environment
-    traceLimit: 0,          // 0 = full stack trace
+    traceLimit: 0,          // 0 = full stack trace (the default)
 );
 
 $reporter = new Reporter(
     $config,
     new CurlHttpClient,
     new Scrubber(['password', 'token', 'secret', 'authorization', 'cookie']),
-    new ExceptionPayloadBuilder,
 );
 
 // Global exception / error / fatal-shutdown handlers.
@@ -68,10 +83,18 @@ ErrorHandler::register($reporter);
 $reporter->reportException($e, ['order_id' => 42]);
 ```
 
+The payload builder is derived from the `Config` (its `release` and
+`traceLimit` apply to every report); pass your own
+`Payload\ExceptionPayloadBuilder` as the fourth argument only to override it.
+
 `key` is the per-project API key generated in the LaravelMonitor dashboard
 (shown only once at creation). Reporting is fail-safe by design: transport or
 configuration errors are swallowed (optionally logged through a PSR-3 logger
 passed to `Reporter`) and never break the host application.
+
+`ErrorHandler::register()` is additive: a previously registered exception
+handler still runs after the report, and when none exists the uncaught
+exception is written to `error_log` exactly as PHP would have done.
 
 ## Privacy
 
