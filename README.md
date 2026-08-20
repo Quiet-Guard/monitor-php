@@ -1,10 +1,10 @@
-# LaravelMonitor: PHP core
+# Quiet Guard: PHP core
 
-Framework-agnostic PHP client core for [LaravelMonitor](https://github.com/La-boite-a-code/LaravelMonitor),
+Framework-agnostic PHP client core for [Quiet Guard](https://github.com/La-boite-a-code/Quiet Guard),
 the Laravel-first monitoring platform (exceptions, logs, dependency security, uptime).
 
 This package contains the platform-neutral building blocks shared by every
-LaravelMonitor client: the Laravel SDK (`laboiteacode/laravel-monitor`), the
+Quiet Guard client: the Laravel SDK (`laboiteacode/laravel-monitor`), the
 Symfony bundle and the WordPress plugin are all thin adapters over it. If you
 use one of those, you do not need to install this package directly. Use it only
 to build a client for another platform or for a plain-PHP application.
@@ -22,13 +22,13 @@ plain `composer require laboiteacode/monitor-php`.
 Until then, install it from a clone of the monorepo using a path repository:
 
 ```bash
-git clone https://github.com/La-boite-a-code/LaravelMonitor.git
+git clone https://github.com/La-boite-a-code/Quiet Guard.git
 ```
 
 ```json
 {
     "repositories": [
-        { "type": "path", "url": "../LaravelMonitor/packages/monitor-php", "options": { "versions": { "laboiteacode/monitor-php": "0.1.0" } } }
+        { "type": "path", "url": "../Quiet Guard/packages/monitor-php", "options": { "versions": { "laboiteacode/monitor-php": "0.1.0" } } }
     ]
 }
 ```
@@ -87,7 +87,7 @@ The payload builder is derived from the `Config` (its `release` and
 `traceLimit` apply to every report); pass your own
 `Payload\ExceptionPayloadBuilder` as the fourth argument only to override it.
 
-`key` is the per-project API key generated in the LaravelMonitor dashboard
+`key` is the per-project API key generated in the Quiet Guard dashboard
 (shown only once at creation). Reporting is fail-safe by design: transport or
 configuration errors are swallowed (optionally logged through a PSR-3 logger
 passed to `Reporter`) and never break the host application.
@@ -104,7 +104,7 @@ line, function, class and call type.
 
 ## Documentation
 
-Full documentation is served by your LaravelMonitor server under `/docs`
+Full documentation is served by your Quiet Guard server under `/docs`
 (for example `https://monitor.example.com/docs`), including a dedicated
 section for this package.
 

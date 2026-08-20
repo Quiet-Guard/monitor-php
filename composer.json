@@ -1,6 +1,6 @@
 {
     "name": "laboiteacode/monitor-php",
-    "description": "Framework-agnostic PHP core for LaravelMonitor clients (Laravel, Symfony, WordPress).",
+    "description": "Framework-agnostic PHP core for Quiet Guard clients (Laravel, Symfony, WordPress).",
     "type": "library",
     "license": "MIT",
     "keywords": [
@@ -16,10 +16,10 @@
             "email": "alexandre@laboiteacode.fr"
         }
     ],
-    "homepage": "https://github.com/La-boite-a-code/LaravelMonitor",
+    "homepage": "https://github.com/La-boite-a-code/Quiet Guard",
     "support": {
-        "issues": "https://github.com/La-boite-a-code/LaravelMonitor/issues",
-        "source": "https://github.com/La-boite-a-code/LaravelMonitor"
+        "issues": "https://github.com/La-boite-a-code/Quiet Guard/issues",
+        "source": "https://github.com/La-boite-a-code/Quiet Guard"
     },
     "require": {
         "php": "^8.2",
