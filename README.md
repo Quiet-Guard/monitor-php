@@ -1,6 +1,6 @@
 # Quiet Guard: PHP core
 
-Framework-agnostic PHP client core for [Quiet Guard](https://github.com/La-boite-a-code/Quiet Guard),
+Framework-agnostic PHP client core for [Quiet Guard](https://github.com/Quiet-Guard/monitor-php),
 the Laravel-first monitoring platform (exceptions, logs, dependency security, uptime).
 
 This package contains the platform-neutral building blocks shared by every
@@ -22,13 +22,13 @@ plain `composer require laboiteacode/monitor-php`.
 Until then, install it from a clone of the monorepo using a path repository:
 
 ```bash
-git clone https://github.com/La-boite-a-code/Quiet Guard.git
+git clone https://github.com/La-boite-a-code/LaravelMonitor.git
 ```
 
 ```json
 {
     "repositories": [
-        { "type": "path", "url": "../Quiet Guard/packages/monitor-php", "options": { "versions": { "laboiteacode/monitor-php": "0.1.0" } } }
+        { "type": "path", "url": "../LaravelMonitor/packages/monitor-php", "options": { "versions": { "laboiteacode/monitor-php": "0.1.0" } } }
     ]
 }
 ```

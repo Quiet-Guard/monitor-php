@@ -16,10 +16,10 @@
             "email": "alexandre@laboiteacode.fr"
         }
     ],
-    "homepage": "https://github.com/La-boite-a-code/Quiet Guard",
+    "homepage": "https://github.com/Quiet-Guard/monitor-php",
     "support": {
-        "issues": "https://github.com/La-boite-a-code/Quiet Guard/issues",
-        "source": "https://github.com/La-boite-a-code/Quiet Guard"
+        "issues": "https://github.com/Quiet-Guard/monitor-php/issues",
+        "source": "https://github.com/Quiet-Guard/monitor-php"
     },
     "require": {
         "php": "^8.2",
