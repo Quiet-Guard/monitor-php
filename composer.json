@@ -12,8 +12,9 @@
     ],
     "authors": [
         {
-            "name": "La boite a code",
-            "email": "alexandre@laboiteacode.fr"
+            "name": "Alexandre Ribes",
+            "email": "alexandre@laboiteacode.fr",
+            "homepage": "https://laboiteacode.fr"
         }
     ],
     "homepage": "https://github.com/Quiet-Guard/monitor-php",
