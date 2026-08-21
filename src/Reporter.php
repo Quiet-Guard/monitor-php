@@ -5,6 +5,7 @@ namespace LaBoiteACode\Monitor;
 use LaBoiteACode\Monitor\Http\HttpClient;
 use LaBoiteACode\Monitor\Payload\ExceptionPayloadBuilder;
 use LaBoiteACode\Monitor\Support\Scrubber;
+use LaBoiteACode\Monitor\Support\ValueRedactor;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
@@ -17,6 +18,8 @@ class Reporter
 {
     private readonly ExceptionPayloadBuilder $builder;
 
+    private readonly ValueRedactor $redactor;
+
     public function __construct(
         private readonly Config $config,
         private readonly HttpClient $http,
@@ -27,6 +30,11 @@ class Reporter
         // Default to a builder wired from the Config, so release and traceLimit
         // set there apply without hand-constructing an ExceptionPayloadBuilder.
         $this->builder = $builder ?? new ExceptionPayloadBuilder($config->traceLimit, $config->release);
+
+        // Value masking is the last thing that happens to a payload. Doing it
+        // here rather than in each builder means a field added later cannot be
+        // forgotten: whatever reaches the wire has been through it.
+        $this->redactor = $config->redactor();
     }
 
     /**
@@ -37,7 +45,7 @@ class Reporter
         $payload = $this->builder->build($e, $context);
         $payload['context'] = $this->scrubber->scrub($payload['context']);
 
-        return $this->post('/api/v1/ingest', $payload, 'exception');
+        return $this->post('/api/v1/ingest', $this->redactor->redactAll($payload), 'exception');
     }
 
     /**
@@ -49,7 +57,9 @@ class Reporter
             return true;
         }
 
-        return $this->post('/api/v1/logs', ['logs' => $this->scrubber->scrub($logs)], 'logs');
+        return $this->post('/api/v1/logs', $this->redactor->redactAll(
+            ['logs' => $this->scrubber->scrub($logs)],
+        ), 'logs');
     }
 
     /**
