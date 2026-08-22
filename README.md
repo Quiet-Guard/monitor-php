@@ -19,16 +19,13 @@ to build a client for another platform or for a plain-PHP application.
 The package is not published on Packagist yet. Once it is, installing will be a
 plain `composer require laboiteacode/monitor-php`.
 
-Until then, install it from a clone of the monorepo using a path repository:
-
-```bash
-git clone https://github.com/La-boite-a-code/LaravelMonitor.git
-```
+Until then, declare the public repository in the application's `composer.json`
+and require it. Nothing to clone, nothing to keep in sync:
 
 ```json
 {
     "repositories": [
-        { "type": "path", "url": "../LaravelMonitor/packages/monitor-php", "options": { "versions": { "laboiteacode/monitor-php": "0.1.0" } } }
+        { "type": "vcs", "url": "https://github.com/Quiet-Guard/monitor-php" }
     ]
 }
 ```
