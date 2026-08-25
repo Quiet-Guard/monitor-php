@@ -1,6 +1,6 @@
 # Quiet Guard: PHP core
 
-Framework-agnostic PHP client core for [Quiet Guard](https://github.com/Quiet-Guard/monitor-php),
+Framework-agnostic PHP client core for Quiet Guard,
 the Laravel-first monitoring platform (exceptions, logs, dependency security, uptime).
 
 This package contains the platform-neutral building blocks shared by every
