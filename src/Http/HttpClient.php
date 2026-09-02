@@ -1,6 +1,6 @@
 <?php
 
-namespace LaBoiteACode\Monitor\Http;
+namespace QuietGuard\Monitor\Http;
 
 /**
  * Minimal transport contract so adapters can inject any client (PSR-18, Guzzle,

@@ -1,8 +1,8 @@
 <?php
 
-namespace LaBoiteACode\Monitor;
+namespace QuietGuard\Monitor;
 
-use LaBoiteACode\Monitor\Support\ValueRedactor;
+use QuietGuard\Monitor\Support\ValueRedactor;
 
 /**
  * Immutable client configuration shared by every platform adapter.

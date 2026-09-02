@@ -1,12 +1,12 @@
 <?php
 
-namespace LaBoiteACode\Monitor;
+namespace QuietGuard\Monitor;
 
-use LaBoiteACode\Monitor\Http\HttpClient;
-use LaBoiteACode\Monitor\Payload\ExceptionPayloadBuilder;
-use LaBoiteACode\Monitor\Support\Scrubber;
-use LaBoiteACode\Monitor\Support\ValueRedactor;
 use Psr\Log\LoggerInterface;
+use QuietGuard\Monitor\Http\HttpClient;
+use QuietGuard\Monitor\Payload\ExceptionPayloadBuilder;
+use QuietGuard\Monitor\Support\Scrubber;
+use QuietGuard\Monitor\Support\ValueRedactor;
 use Throwable;
 
 /**

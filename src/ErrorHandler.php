@@ -1,6 +1,6 @@
 <?php
 
-namespace LaBoiteACode\Monitor;
+namespace QuietGuard\Monitor;
 
 use ErrorException;
 use Throwable;

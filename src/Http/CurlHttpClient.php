@@ -1,6 +1,6 @@
 <?php
 
-namespace LaBoiteACode\Monitor\Http;
+namespace QuietGuard\Monitor\Http;
 
 /**
  * Dependency-free transport using ext-curl. Never throws.

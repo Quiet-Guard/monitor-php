@@ -14,7 +14,7 @@
         {
             "name": "Alexandre Ribes",
             "email": "alexandre@laboiteacode.fr",
-            "homepage": "https://laboiteacode.fr"
+            "homepage": "https://quietguard.dev"
         }
     ],
     "homepage": "https://github.com/Quiet-Guard/monitor-php",
@@ -30,7 +30,7 @@
     },
     "autoload": {
         "psr-4": {
-            "LaBoiteACode\\Monitor\\": "src/"
+            "QuietGuard\\Monitor\\": "src/"
         }
     },
     "minimum-stability": "stable",

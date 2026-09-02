@@ -1,6 +1,6 @@
 <?php
 
-namespace LaBoiteACode\Monitor\Support;
+namespace QuietGuard\Monitor\Support;
 
 /**
  * Masks sensitive values by key, recursively. Framework-agnostic.

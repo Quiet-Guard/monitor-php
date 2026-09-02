@@ -1,6 +1,6 @@
 <?php
 
-namespace LaBoiteACode\Monitor\Support;
+namespace QuietGuard\Monitor\Support;
 
 /**
  * Masks personal data by the shape of the VALUE, wherever it sits.

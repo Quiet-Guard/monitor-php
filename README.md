@@ -24,24 +24,24 @@ composer require quiet-guard/monitor-php
 
 | Class | Role |
 |---|---|
-| `LaBoiteACode\Monitor\Config` | Immutable client configuration (server URL, project key, timeout, release, environments, trace limit). |
-| `LaBoiteACode\Monitor\Reporter` | The platform-neutral client: `reportException()`, `sendLogs()`, `sendDependencies()`. Never throws. |
-| `LaBoiteACode\Monitor\ErrorHandler` | Global PHP exception, error and fatal-shutdown handlers for hosts without a framework pipeline. |
-| `LaBoiteACode\Monitor\Payload\ExceptionPayloadBuilder` | Builds the ingestion payload from a `Throwable` (full stack trace by default, frame arguments never sent). |
-| `LaBoiteACode\Monitor\Support\Scrubber` | Masks sensitive values by key, recursively, before anything leaves the app. |
-| `LaBoiteACode\Monitor\Http\HttpClient` / `CurlHttpClient` | Transport interface and its dependency-free curl implementation. |
-| `LaBoiteACode\Monitor\Backup\BackupCipher` | Hybrid secretstream encryption for the zero-knowledge backup vault. |
+| `QuietGuard\Monitor\Config` | Immutable client configuration (server URL, project key, timeout, release, environments, trace limit). |
+| `QuietGuard\Monitor\Reporter` | The platform-neutral client: `reportException()`, `sendLogs()`, `sendDependencies()`. Never throws. |
+| `QuietGuard\Monitor\ErrorHandler` | Global PHP exception, error and fatal-shutdown handlers for hosts without a framework pipeline. |
+| `QuietGuard\Monitor\Payload\ExceptionPayloadBuilder` | Builds the ingestion payload from a `Throwable` (full stack trace by default, frame arguments never sent). |
+| `QuietGuard\Monitor\Support\Scrubber` | Masks sensitive values by key, recursively, before anything leaves the app. |
+| `QuietGuard\Monitor\Http\HttpClient` / `CurlHttpClient` | Transport interface and its dependency-free curl implementation. |
+| `QuietGuard\Monitor\Backup\BackupCipher` | Hybrid secretstream encryption for the zero-knowledge backup vault. |
 
 ## Quickstart
 
 Wire a reporter and register the global handlers (plain-PHP host):
 
 ```php
-use LaBoiteACode\Monitor\Config;
-use LaBoiteACode\Monitor\ErrorHandler;
-use LaBoiteACode\Monitor\Http\CurlHttpClient;
-use LaBoiteACode\Monitor\Reporter;
-use LaBoiteACode\Monitor\Support\Scrubber;
+use QuietGuard\Monitor\Config;
+use QuietGuard\Monitor\ErrorHandler;
+use QuietGuard\Monitor\Http\CurlHttpClient;
+use QuietGuard\Monitor\Reporter;
+use QuietGuard\Monitor\Support\Scrubber;
 
 $config = new Config(
     url: 'https://monitor.example.com',

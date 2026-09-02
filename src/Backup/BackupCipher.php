@@ -1,6 +1,6 @@
 <?php
 
-namespace LaBoiteACode\Monitor\Backup;
+namespace QuietGuard\Monitor\Backup;
 
 use RuntimeException;
 

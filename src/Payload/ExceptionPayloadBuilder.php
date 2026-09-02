@@ -1,6 +1,6 @@
 <?php
 
-namespace LaBoiteACode\Monitor\Payload;
+namespace QuietGuard\Monitor\Payload;
 
 use Throwable;
 
