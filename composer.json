@@ -1,5 +1,5 @@
 {
-    "name": "laboiteacode/monitor-php",
+    "name": "quiet-guard/monitor-php",
     "description": "Framework-agnostic PHP core for Quiet Guard clients (Laravel, Symfony, WordPress).",
     "type": "library",
     "license": "MIT",

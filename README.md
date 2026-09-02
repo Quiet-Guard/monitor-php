@@ -4,7 +4,7 @@ Framework-agnostic PHP client core for Quiet Guard,
 the Laravel-first monitoring platform (exceptions, logs, dependency security, uptime).
 
 This package contains the platform-neutral building blocks shared by every
-Quiet Guard client: the Laravel SDK (`laboiteacode/laravel-monitor`), the
+Quiet Guard client: the Laravel SDK (`quiet-guard/laravel-monitor`), the
 Symfony bundle and the WordPress plugin are all thin adapters over it. If you
 use one of those, you do not need to install this package directly. Use it only
 to build a client for another platform or for a plain-PHP application.
@@ -16,22 +16,8 @@ to build a client for another platform or for a plain-PHP application.
 
 ## Installation
 
-The package is not published on Packagist yet. Once it is, installing will be a
-plain `composer require laboiteacode/monitor-php`.
-
-Until then, declare the public repository in the application's `composer.json`
-and require it. Nothing to clone, nothing to keep in sync:
-
-```json
-{
-    "repositories": [
-        { "type": "vcs", "url": "https://github.com/Quiet-Guard/monitor-php" }
-    ]
-}
-```
-
 ```bash
-composer require laboiteacode/monitor-php:^0.1
+composer require quiet-guard/monitor-php
 ```
 
 ## What it provides
