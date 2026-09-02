@@ -16,6 +16,17 @@ to build a client for another platform or for a plain-PHP application.
 
 ## Installation
 
+Not on Packagist yet, so declare the repository in your own `composer.json`,
+then require the package. Drop the block the day the packages are listed.
+
+```json
+{
+    "repositories": [
+        { "type": "vcs", "url": "https://github.com/Quiet-Guard/monitor-php" }
+    ]
+}
+```
+
 ```bash
 composer require quiet-guard/monitor-php
 ```
