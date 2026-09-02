@@ -55,7 +55,7 @@ $config = new Config(
 $reporter = new Reporter(
     $config,
     new CurlHttpClient,
-    new Scrubber(['password', 'passphrase', 'token', 'secret', 'authorization', 'cookie']),
+    new Scrubber(['password', 'passphrase', 'token', 'secret', 'authorization', 'cookie', 'referer', 'referrer']),
 );
 
 // Global exception / error / fatal-shutdown handlers.
