@@ -83,17 +83,41 @@ class Reporter
             return false;
         }
 
+        // The API prefix, removed if the caller supplied it. Every path below
+        // carries its own /api/v1, and "the base URL of your server" reads as
+        // "the address of the API": both readings have to work, because the
+        // wrong one answers 404 on every call and looks exactly like a bad key.
+        $base = (string) preg_replace('#/api(/v\d+)?$#i', '', rtrim(trim($this->config->url), '/'));
+        $url = $base.$path;
+
         try {
             $status = $this->http->postJson(
-                rtrim($this->config->url, '/').$path,
+                $url,
                 $this->config->key,
                 $payload,
                 $this->config->timeout,
             );
 
-            return $status >= 200 && $status < 300;
+            if ($status >= 200 && $status < 300) {
+                return true;
+            }
+
+            // A refusal the server can explain used to vanish here: CurlHttpClient
+            // never throws, it returns 0, so the catch below was the only path
+            // that ever said anything and it could not fire. A 401 on a mistyped
+            // key, a 402 during dunning and a 403 on a plan gate were all one
+            // silent false, in clients that have no console to print to.
+            $this->logger?->warning("Monitor: {$kind} refused", [
+                'status' => $status,
+                'url' => $url,
+            ]);
+
+            return false;
         } catch (Throwable $e) {
-            $this->logger?->warning("Monitor: failed to send {$kind}", ['error' => $e->getMessage()]);
+            $this->logger?->warning("Monitor: failed to send {$kind}", [
+                'error' => $e->getMessage(),
+                'url' => $url,
+            ]);
 
             return false;
         }
