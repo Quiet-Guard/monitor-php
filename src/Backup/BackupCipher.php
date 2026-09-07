@@ -35,23 +35,54 @@ class BackupCipher
         $in = $this->open($inPath, 'rb');
         $out = $this->open($outPath, 'wb');
 
-        fwrite($out, pack('N', strlen($sealedKey)));
-        fwrite($out, $sealedKey);
-        fwrite($out, $header);
+        try {
+            $this->write($out, pack('N', strlen($sealedKey)), $outPath);
+            $this->write($out, $sealedKey, $outPath);
+            $this->write($out, $header, $outPath);
 
-        do {
-            $chunk = fread($in, self::CHUNK);
-            $eof = feof($in);
-            $tag = $eof
-                ? SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL
-                : SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE;
-            $cipher = sodium_crypto_secretstream_xchacha20poly1305_push($state, $chunk, '', $tag);
-            fwrite($out, pack('N', strlen($cipher)));
-            fwrite($out, $cipher);
-        } while (! $eof);
+            do {
+                $chunk = fread($in, self::CHUNK);
+                $eof = feof($in);
+                $tag = $eof
+                    ? SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL
+                    : SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE;
+                $cipher = sodium_crypto_secretstream_xchacha20poly1305_push($state, $chunk, '', $tag);
+                $this->write($out, pack('N', strlen($cipher)), $outPath);
+                $this->write($out, $cipher, $outPath);
+            } while (! $eof);
+        } finally {
+            fclose($in);
 
-        fclose($in);
-        fclose($out);
+            // fclose flushes, and a flush is where a full disk usually fails.
+            // Ignoring it turns a short file into a silent one.
+            if (! fclose($out)) {
+                throw new RuntimeException("Could not finish writing {$outPath}; the archive is incomplete.");
+            }
+        }
+    }
+
+    /**
+     * A partial write is a corrupt archive, so it may not pass in silence.
+     *
+     * fwrite() returns the number of bytes it actually wrote, and returns it
+     * SHORT rather than throwing when the disk or the pipe is full. Every call
+     * here used to discard it: on a small /tmp the archive came out truncated,
+     * was encrypted and uploaded exactly as if it were whole, and the customer
+     * learned of it on the day they tried to restore, when decryptFile's own
+     * TAG_FINAL check finally said "Truncated backup blob."
+     *
+     * That check is the right guard in the wrong place. This is the place.
+     */
+    private function write($handle, string $bytes, string $path): void
+    {
+        $written = fwrite($handle, $bytes);
+
+        if ($written === false || $written !== strlen($bytes)) {
+            throw new RuntimeException(
+                "Could not write the whole archive to {$path}; the disk refused after ".
+                (int) $written.' of '.strlen($bytes).' bytes.'
+            );
+        }
     }
 
     public function decryptFile(string $inPath, string $outPath, string $publicKeyBase64, string $privateKeyRaw): void
