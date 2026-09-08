@@ -88,12 +88,10 @@ class Reporter
             return false;
         }
 
-        // The API prefix, removed if the caller supplied it. Every path below
-        // carries its own /api/v1, and "the base URL of your server" reads as
-        // "the address of the API": both readings have to work, because the
-        // wrong one answers 404 on every call and looks exactly like a bad key.
-        $base = (string) preg_replace('#/api(/v\d+)?$#i', '', rtrim(trim($this->config->url), '/'));
-        $url = $base.$path;
+        // Config a déjà normalisé l'adresse (barre finale, préfixe d'API,
+        // valeur absente). Une seconde normalisation ici serait une seconde
+        // définition de la même règle, donc celle qui diverge un jour.
+        $url = $this->config->url.$path;
 
         try {
             $status = $this->http->postJson(
