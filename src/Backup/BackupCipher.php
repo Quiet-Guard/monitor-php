@@ -128,7 +128,7 @@ class BackupCipher
                 }
 
                 [$message, $tag] = $result;
-                fwrite($out, $message);
+                $this->write($out, $message, $outPath);
 
                 if ($tag === SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL) {
                     $final = true;
@@ -150,7 +150,16 @@ class BackupCipher
         }
 
         fclose($in);
-        fclose($out);
+
+        // La moitié restauration de la même règle : un disque plein pendant une
+        // restauration écrivait une archive courte et rendait la main sans rien
+        // dire, ce qui est pire ici qu'à l'écriture, parce que le client croit
+        // alors tenir ses données.
+        if (! fclose($out)) {
+            @unlink($outPath);
+
+            throw new RuntimeException("Could not finish writing {$outPath}; the restored file is incomplete.");
+        }
     }
 
     /**

@@ -5,6 +5,7 @@ namespace QuietGuard\Monitor;
 use Psr\Log\LoggerInterface;
 use QuietGuard\Monitor\Http\HttpClient;
 use QuietGuard\Monitor\Payload\ExceptionPayloadBuilder;
+use QuietGuard\Monitor\Support\Cut;
 use QuietGuard\Monitor\Support\Scrubber;
 use QuietGuard\Monitor\Support\ValueRedactor;
 use Throwable;
@@ -45,7 +46,11 @@ class Reporter
         $payload = $this->builder->build($e, $context);
         $payload['context'] = $this->scrubber->scrub($payload['context']);
 
-        return $this->post('/api/v1/ingest', $this->redactor->redactAll($payload), 'exception');
+        // Bornée APRÈS le masquage : masquer REMPLACE une valeur par une
+        // étiquette plus longue, donc une charge coupée avant pouvait repasser
+        // au-dessus de la limite du serveur et se faire refuser en silence,
+        // exactement ce que la troncature existe pour empêcher.
+        return $this->post('/api/v1/ingest', Cut::payload($this->redactor->redactAll($payload)), 'exception');
     }
 
     /**
@@ -57,9 +62,9 @@ class Reporter
             return true;
         }
 
-        return $this->post('/api/v1/logs', $this->redactor->redactAll(
+        return $this->post('/api/v1/logs', Cut::payload($this->redactor->redactAll(
             ['logs' => $this->scrubber->scrub($logs)],
-        ), 'logs');
+        )), 'logs');
     }
 
     /**

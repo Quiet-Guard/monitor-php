@@ -36,4 +36,54 @@ final class Cut
 
         return mb_substr($value, 0, $limit - mb_strlen(self::MARKER)).self::MARKER;
     }
+
+    /** The server's own limits, by field. */
+    public const LIMITS = [
+        'message' => 8192,
+        'class' => 255,
+        'file' => 1024,
+        'release' => 255,
+    ];
+
+    /**
+     * Bound a whole ingestion payload, AFTER redaction and last before the wire.
+     *
+     * Cutting in the payload builder alone was not enough, and the case that
+     * proves it is the one the redactor exists for: masking REPLACES a value
+     * with a longer label, `[redacted:phone]` being sixteen characters where a
+     * French number is ten. A message of phone numbers cut to 8192 came back
+     * out of redactAll() at over twelve thousand and was refused by the same
+     * silent 422 the truncation was added to stop.
+     *
+     * So the bound has to be the last thing that touches the payload, for the
+     * same reason the redactor is: whatever happens after it is unbounded by
+     * definition. The builder keeps its own pass, which costs nothing on an
+     * already short string and still protects a caller who builds a payload
+     * without going through a reporter.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    public static function payload(array $payload): array
+    {
+        foreach (['class', 'message', 'file'] as $field) {
+            if (isset($payload['exception'][$field]) && is_string($payload['exception'][$field])) {
+                $payload['exception'][$field] = self::to($payload['exception'][$field], self::LIMITS[$field]);
+            }
+        }
+
+        if (isset($payload['context']['release']) && is_string($payload['context']['release'])) {
+            $payload['context']['release'] = self::to($payload['context']['release'], self::LIMITS['release']);
+        }
+
+        if (isset($payload['logs']) && is_array($payload['logs'])) {
+            foreach ($payload['logs'] as $i => $entry) {
+                if (isset($entry['message']) && is_string($entry['message'])) {
+                    $payload['logs'][$i]['message'] = self::to($entry['message'], self::LIMITS['message']);
+                }
+            }
+        }
+
+        return $payload;
+    }
 }
