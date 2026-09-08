@@ -164,7 +164,7 @@ class ValueRedactor
         return match ($name) {
             'card' => $this->passesLuhn(preg_replace('/\D/', '', $match) ?? ''),
             'iban' => $this->passesMod97(preg_replace('/\s/', '', $match) ?? ''),
-            'nir' => $this->passesNirKey(preg_replace('/\D/', '', $match) ?? ''),
+            'nir' => $this->passesNirKey(self::corsicaToDigits($match)),
             default => true,
         };
     }
@@ -230,6 +230,25 @@ class ValueRedactor
         }
 
         return $remainder === 1;
+    }
+
+    /**
+     * La Corse en chiffres, sans quoi son NIR n'est jamais masqué.
+     *
+     * Le motif accepte 2A et 2B comme département, et la clé de contrôle est
+     * calculée sur les chiffres seuls : retirer les non-chiffres laissait 14
+     * caractères là où la vérification en exige 15, donc elle répondait TOUJOURS
+     * faux et un NIR corse traversait en clair. Le motif annonçait la Corse et
+     * la clé la rendait inatteignable.
+     *
+     * 2A vaut 19 et 2B vaut 18 : c'est la règle officielle du calcul, pas une
+     * approximation, et elle s'applique avant le modulo 97.
+     */
+    private static function corsicaToDigits(string $match): string
+    {
+        $normalised = str_ireplace(['2A', '2B'], ['19', '18'], $match);
+
+        return preg_replace('/\D/', '', $normalised) ?? '';
     }
 
     private function passesNirKey(string $digits): bool
