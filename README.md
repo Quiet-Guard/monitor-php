@@ -79,6 +79,12 @@ passed to `Reporter`) and never break the host application.
 handler still runs after the report, and when none exists the uncaught
 exception is written to `error_log` exactly as PHP would have done.
 
+It reports errors at `E_USER_ERROR | E_RECOVERABLE_ERROR` by default, de-duplicated
+per `file:line` and capped at 20 per request, because every severity forwarded as
+one synchronous POST turns a warning inside a loop into hundreds of blocking calls.
+Pass a mask to widen it: `ErrorHandler::register($reporter, E_ALL)`, optionally with
+a third argument for the cap. Fatal shutdowns are caught separately and unaffected.
+
 ## Privacy
 
 The `Scrubber` masks configured keys (passwords, tokens, cookies...) recursively
