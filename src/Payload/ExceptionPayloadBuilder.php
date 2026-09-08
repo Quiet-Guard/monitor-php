@@ -2,6 +2,7 @@
 
 namespace QuietGuard\Monitor\Payload;
 
+use QuietGuard\Monitor\Support\Cut;
 use Throwable;
 
 /**
@@ -9,6 +10,14 @@ use Throwable;
  */
 class ExceptionPayloadBuilder
 {
+    /** The server's own limits, enforced here so a report is never lost to them. See Cut. */
+    private const LIMITS = [
+        'message' => 8192,
+        'class' => 255,
+        'file' => 1024,
+        'release' => 255,
+    ];
+
     public function __construct(
         private readonly int $traceLimit = 0,
         private readonly ?string $release = null,
@@ -22,14 +31,17 @@ class ExceptionPayloadBuilder
     {
         return [
             'exception' => [
-                'class' => $e::class,
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
+                'class' => Cut::to($e::class, self::LIMITS['class']),
+                'message' => Cut::to($e->getMessage(), self::LIMITS['message']),
+                'file' => Cut::to($e->getFile(), self::LIMITS['file']),
                 'line' => $e->getLine(),
                 'trace' => $this->trace($e),
             ],
             'context' => array_merge(
-                array_filter(['release' => $this->release], static fn ($v) => $v !== null),
+                array_filter(
+                    ['release' => Cut::to($this->release, self::LIMITS['release'])],
+                    static fn ($v) => $v !== null,
+                ),
                 $context,
             ),
         ];
