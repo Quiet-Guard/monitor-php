@@ -2,6 +2,17 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
+## Unreleased
+
+### Fixed
+
+- `Config` resolves and normalises the server address itself: an absent value
+  becomes the hosted service (`Config::HOSTED_URL`), and a trailing `/api` or
+  `/api/vN` supplied by the caller is stripped, since every path carries its
+  own. `Reporter` held a second copy of that stripping rule and now reads the
+  normalised value. `isConfigured()` asks for the key alone, the only thing
+  that cannot be guessed.
+
 ## v0.2.1
 
 ### Fixed
