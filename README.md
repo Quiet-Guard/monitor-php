@@ -44,7 +44,7 @@ use QuietGuard\Monitor\Reporter;
 use QuietGuard\Monitor\Support\Scrubber;
 
 $config = new Config(
-    url: 'https://monitor.example.com',
+    url: null,              // null or empty = the hosted service, https://quietguard.dev
     key: 'lm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
     timeout: 3,
     release: null,          // e.g. a git SHA
