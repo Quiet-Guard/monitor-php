@@ -24,10 +24,10 @@ composer require quiet-guard/monitor-php
 
 | Class | Role |
 |---|---|
-| `QuietGuard\Monitor\Config` | Immutable client configuration (server URL, project key, timeout, release, environments, trace limit). |
+| `QuietGuard\Monitor\Config` | Immutable client configuration (server URL, project key, timeout, release, environments, trace limit, source snippets). |
 | `QuietGuard\Monitor\Reporter` | The platform-neutral client: `reportException()`, `sendLogs()`, `sendDependencies()`. Never throws. |
 | `QuietGuard\Monitor\ErrorHandler` | Global PHP exception, error and fatal-shutdown handlers for hosts without a framework pipeline. |
-| `QuietGuard\Monitor\Payload\ExceptionPayloadBuilder` | Builds the ingestion payload from a `Throwable` (full stack trace by default, frame arguments never sent). |
+| `QuietGuard\Monitor\Payload\ExceptionPayloadBuilder` | Builds the ingestion payload from a `Throwable` (throw site first, full stack trace by default, a source snippet on application frames, frame arguments never sent). |
 | `QuietGuard\Monitor\Support\Scrubber` | Masks sensitive values by key, recursively, before anything leaves the app. |
 | `QuietGuard\Monitor\Http\HttpClient` / `CurlHttpClient` | Transport interface and its dependency-free curl implementation. |
 | `QuietGuard\Monitor\Backup\BackupCipher` | Hybrid secretstream encryption for the zero-knowledge backup vault. |
@@ -49,7 +49,8 @@ $config = new Config(
     timeout: 3,
     release: null,          // e.g. a git SHA
     environments: [],       // report from every environment
-    traceLimit: 0,          // 0 = full stack trace (the default)
+    traceLimit: 0,          // 0 = full stack trace (the default); the throw site counts as one frame
+    codeSnippets: true,     // source lines around application frames (never a dependency's); false sends file and line only
 );
 
 $reporter = new Reporter(
@@ -66,8 +67,8 @@ ErrorHandler::register($reporter);
 $reporter->reportException($e, ['order_id' => 42]);
 ```
 
-The payload builder is derived from the `Config` (its `release` and
-`traceLimit` apply to every report); pass your own
+The payload builder is derived from the `Config` (its `release`, `traceLimit`
+and `codeSnippets` apply to every report); pass your own
 `Payload\ExceptionPayloadBuilder` as the fourth argument only to override it.
 
 `key` is the per-project API key generated in the Quiet Guard dashboard
@@ -89,7 +90,11 @@ a third argument for the cap. Fatal shutdowns are caught separately and unaffect
 
 The `Scrubber` masks configured keys (passwords, tokens, cookies...) recursively
 in every payload, and stack-trace frame arguments are never sent: only file,
-line, function, class and call type.
+line, function, class and call type. From version 0.3 the trace starts at the
+throw site and each application frame carries a source snippet, the five lines
+on each side of its line (`Payload\SourceSnippet`); a dependency's frames never
+do, and a snippet line that names a scrubbed key is masked whole, because source
+code is where a hardcoded secret lives.
 
 ## Documentation
 

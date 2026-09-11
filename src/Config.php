@@ -45,6 +45,10 @@ class Config
         // protects nobody. Pass an empty array to send payloads untouched.
         public readonly array $redact = ValueRedactor::PATTERNS,
         public readonly array $customRedactions = [],
+        // A few lines of the application's own source around each frame, so
+        // the dashboard can show the failing line in context. Dependencies
+        // never send theirs. Off, only file and line travel.
+        public readonly bool $codeSnippets = true,
     ) {
         $this->url = self::normaliseUrl($url);
     }

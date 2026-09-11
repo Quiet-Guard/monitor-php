@@ -39,6 +39,7 @@ final class Cut
 
     /** The server's own limits, by field. */
     public const LIMITS = [
+        'snippet_line' => 500,
         'message' => 8192,
         'class' => 255,
         'file' => 1024,
@@ -74,6 +75,23 @@ final class Cut
 
         if (isset($payload['context']['release']) && is_string($payload['context']['release'])) {
             $payload['context']['release'] = self::to($payload['context']['release'], self::LIMITS['release']);
+        }
+
+        // Snippet lines are cut when read, then redaction LENGTHENS them (a
+        // mask is longer than a short address), and the server refuses one
+        // over the bound with the same silent 422 this pass exists to prevent.
+        if (isset($payload['exception']['trace']) && is_array($payload['exception']['trace'])) {
+            foreach ($payload['exception']['trace'] as $i => $frame) {
+                if (! is_array($frame) || ! isset($frame['code']['lines']) || ! is_array($frame['code']['lines'])) {
+                    continue;
+                }
+
+                foreach ($frame['code']['lines'] as $j => $line) {
+                    if (is_string($line)) {
+                        $payload['exception']['trace'][$i]['code']['lines'][$j] = self::to($line, self::LIMITS['snippet_line']);
+                    }
+                }
+            }
         }
 
         if (isset($payload['logs']) && is_array($payload['logs'])) {

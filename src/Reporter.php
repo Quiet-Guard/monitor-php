@@ -30,7 +30,7 @@ class Reporter
     ) {
         // Default to a builder wired from the Config, so release and traceLimit
         // set there apply without hand-constructing an ExceptionPayloadBuilder.
-        $this->builder = $builder ?? new ExceptionPayloadBuilder($config->traceLimit, $config->release);
+        $this->builder = $builder ?? new ExceptionPayloadBuilder($config->traceLimit, $config->release, $config->codeSnippets);
 
         // Value masking is the last thing that happens to a payload. Doing it
         // here rather than in each builder means a field added later cannot be
@@ -45,6 +45,7 @@ class Reporter
     {
         $payload = $this->builder->build($e, $context);
         $payload['context'] = $this->scrubber->scrub($payload['context']);
+        $payload['exception']['trace'] = $this->scrubber->scrubSnippets($payload['exception']['trace'] ?? []);
 
         // Bornée APRÈS le masquage : masquer REMPLACE une valeur par une
         // étiquette plus longue, donc une charge coupée avant pouvait repasser

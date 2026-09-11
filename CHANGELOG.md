@@ -2,6 +2,25 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
+## Unreleased
+
+### Added
+
+- Stack traces start at the throw site: the exception's own file and line
+  travel as frame zero, the way Laravel's exception page shows them, since
+  PHP's `getTrace()` starts at the caller. `trace_limit` counts that frame.
+- Application frames carry a source snippet (`code.start`, `code.lines`): the
+  five lines on each side of the frame's line, read from the file that ran,
+  cut at 500 characters a line, at most ten frames a report, never a
+  dependency's (`SourceSnippet`). `Config::$codeSnippets` (default true)
+  switches it off. A line that names a secret (a scrub key, or one of
+  `Scrubber::LINE_NEEDLES`: `key`, `auth`, `credential`, `salt`, `private`,
+  `dsn`, `bearer`) AND gives it a value is masked whole, because source is
+  where a hardcoded secret lives (`Scrubber::scrubLines()`); a line that only
+  uses the name stays. `wp-config.php`, `.env*`, `wp-includes/` and
+  `wp-admin/` never carry a snippet, and `Cut::payload()` bounds snippet
+  lines again after redaction, which lengthens them.
+
 ## v0.2.2
 
 ### Fixed
