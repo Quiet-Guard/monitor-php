@@ -31,7 +31,9 @@ All notable changes to `quiet-guard/monitor-php`.
   values by shape over the whole payload turns a sixteen-digit number that
   passes Luhn into `[redacted:card]`, the snapshot is no longer JSON, and the
   password beside that number travelled with it. The names are read in one
-  pass, literal after literal, never by a pattern retried from every quote.
+  pass, literal after literal, never by a pattern retried from every quote,
+  then once more without pairing quotes, so that a stray quote earlier in the
+  text does not hide a `"password":` after it.
 - A string that starts with an absolute `http(s)` URL is masked as an address
   (`Scrubber::scrubUrl()`, public): the values of the query-string parameters
   and of the fragment's `name=value` pairs whose name matches, and every path
@@ -45,7 +47,10 @@ All notable changes to `quiet-guard/monitor-php`.
   webhook setting carries it; a relative address is not reached. A string
   that starts with an address of any other scheme, a DSN such as
   `mysql://root:secret@db/app` or `redis://:secret@cache:6379`, has the
-  password of its userinfo masked the same way, and nothing else.
+  password of its userinfo masked the same way, and the values of its
+  query-string parameters whose name matches, since a DSN writes its options
+  there (`tcp://127.0.0.1:6379?password=...`); the path-token rule stays the
+  web's.
   The text after the URL is handed back as it came, except a pair opened by
   `&`, `?` or `#` whose name matches.
 - A source line that gives a value to an array index named in quotes is masked
