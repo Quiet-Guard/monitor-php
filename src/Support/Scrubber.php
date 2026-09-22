@@ -7,7 +7,11 @@ namespace QuietGuard\Monitor\Support;
  *
  * Matching is by lower-cased substring, so a configured "password" also masks
  * "user_password" and "PASSWORD_CONFIRMATION": derived key names must never
- * leak just because the exact spelling was not listed.
+ * leak just because the exact spelling was not listed. For the same reason a
+ * hyphen and an underscore are one character: Symfony names every header
+ * lower-cased with hyphens, so the password of a Basic auth request arrives as
+ * "php-auth-pw" and an API key header as "x-api-key", while the lists write
+ * "php_auth_pw" and "api_key".
  *
  * Two kinds of string value hold secrets of their own, and the scrubber opens
  * both: a JSON object or array written as a string (Livewire's snapshot) is
@@ -25,8 +29,21 @@ class Scrubber
      */
     private const PATH_TOKEN = '/^[A-Za-z0-9]{40,}$/';
 
-    /** @var array<int, string> lower-cased needles to mask */
+    /**
+     * Lower-cased needles, as configured: what a source line is read with
+     * (namesAValue()), where a hyphen is not an underscore.
+     *
+     * @var array<int, string>
+     */
     private array $keys;
+
+    /**
+     * The same needles as names (see name()): what a key and a query-string
+     * name are matched with.
+     *
+     * @var array<int, string>
+     */
+    private array $names;
 
     /**
      * @param  array<int, string>  $keys
@@ -34,6 +51,7 @@ class Scrubber
     public function __construct(array $keys = [])
     {
         $this->keys = array_map('strtolower', $keys);
+        $this->names = array_map(self::name(...), $this->keys);
     }
 
     /**
@@ -289,12 +307,24 @@ class Scrubber
 
     private function matches(string $key): bool
     {
-        foreach ($this->keys as $needle) {
+        $key = self::name($key);
+
+        foreach ($this->names as $needle) {
             if ($needle !== '' && str_contains($key, $needle)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * A key or a query-string name as it is matched: lower-cased, with a
+     * hyphen read as an underscore, since php-auth-pw and php_auth_pw name
+     * the same value.
+     */
+    private static function name(string $name): string
+    {
+        return str_replace('-', '_', strtolower($name));
     }
 }
