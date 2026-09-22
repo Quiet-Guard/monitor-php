@@ -30,7 +30,8 @@ All notable changes to `quiet-guard/monitor-php`.
   when a quoted name followed by `:` in it matches: a client that masks
   values by shape over the whole payload turns a sixteen-digit number that
   passes Luhn into `[redacted:card]`, the snapshot is no longer JSON, and the
-  password beside that number travelled with it.
+  password beside that number travelled with it. The names are read in one
+  pass, literal after literal, never by a pattern retried from every quote.
 - A string that starts with an absolute `http(s)` URL is masked as an address
   (`Scrubber::scrubUrl()`, public): the values of the query-string parameters
   and of the fragment's `name=value` pairs whose name matches, and every path
@@ -40,8 +41,11 @@ All notable changes to `quiet-guard/monitor-php`.
   value holding one, Symfony's `request.url` for instance, carried it in
   clear. A number, a slug, a UUID or a ULID stays; the scheme, the host, the
   port and the user of a userinfo travel as they came, its password is
-  masked (`user:%5Bscrubbed%5D@`), since a URL typed into a form field, a
-  webhook or a DSN, carries it; a relative address is not reached.
+  masked (`user:%5Bscrubbed%5D@`), since a URL typed into a form field or a
+  webhook setting carries it; a relative address is not reached. A string
+  that starts with an address of any other scheme, a DSN such as
+  `mysql://root:secret@db/app` or `redis://:secret@cache:6379`, has the
+  password of its userinfo masked the same way, and nothing else.
   The text after the URL is handed back as it came, except a pair opened by
   `&`, `?` or `#` whose name matches.
 - A source line that gives a value to an array index named in quotes is masked
