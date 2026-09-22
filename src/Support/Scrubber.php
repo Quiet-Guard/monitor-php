@@ -8,10 +8,22 @@ namespace QuietGuard\Monitor\Support;
  * Matching is by lower-cased substring, so a configured "password" also masks
  * "user_password" and "PASSWORD_CONFIRMATION": derived key names must never
  * leak just because the exact spelling was not listed.
+ *
+ * Two kinds of string value hold secrets of their own, and the scrubber opens
+ * both: a JSON object or array written as a string (Livewire's snapshot) is
+ * decoded and masked by key like any array, and a string that starts with an
+ * absolute http(s) URL has its query string masked by name and its
+ * token-shaped path segments masked outright (see scrubUrl()).
  */
 class Scrubber
 {
     public const MASK = '[scrubbed]';
+
+    /**
+     * A path segment of forty letters or digits in a row: a token far more
+     * often than an identifier.
+     */
+    private const PATH_TOKEN = '/^[A-Za-z0-9]{40,}$/';
 
     /** @var array<int, string> lower-cased needles to mask */
     private array $keys;
@@ -32,7 +44,7 @@ class Scrubber
     {
         foreach ($data as $key => $value) {
             if (is_string($key) && $this->matches(strtolower($key))) {
-                $data[$key] = static::MASK;
+                $data[$key] = self::MASK;
 
                 continue;
             }
@@ -50,14 +62,15 @@ class Scrubber
     }
 
     /**
-     * A value that is a JSON object, or a URL carrying a query string, holds
-     * named values of its own, and the rule that masks a named value has to
-     * reach them.
+     * A value that is a JSON object, or that starts with a URL, holds named
+     * values of its own, and the rule that masks a named value has to reach
+     * them.
      *
      * Livewire is the case that forced it: `components.*.snapshot` is a JSON
      * STRING, so a password typed into a component sailed past a scrubber
      * that only descends into arrays. And a reset link carries its token and
-     * its signature in the query, where no key ever named them.
+     * its signature in the query or in the path, where no key ever named
+     * them.
      */
     private function scrubString(string $value): string
     {
@@ -85,7 +98,7 @@ class Scrubber
                 // (a literal past the float range decodes to INF, which
                 // json_encode refuses) goes whole: handing it back as it came
                 // would send the secret this very call just found.
-                return $encoded === false ? static::MASK : $encoded;
+                return $encoded === false ? self::MASK : $encoded;
             }
         }
 
@@ -93,16 +106,46 @@ class Scrubber
     }
 
     /**
-     * Mask the named values of a URL's query string, and nothing else: the
-     * path is what says where the application broke.
+     * Mask what an absolute http(s) URL at the start of a string carries: the
+     * values of its query string whose name matches the key list, and every
+     * path segment shaped like a token.
+     *
+     * The path segment is the case the query rule cannot see: Laravel's own
+     * reset link (Breeze, Fortify, Jetstream) puts its token in the PATH,
+     * `/reset-password/{token}`, and so does any link that is its own
+     * credential, an invitation or a status page. Forty letters or digits in
+     * a row is that shape; a number, a slug, a UUID (hyphens) or a ULID (26
+     * characters) is not, and stays, since the path is what says where the
+     * application broke.
+     *
+     * Only the leading URL is read, after any leading whitespace, and it ends
+     * at the first whitespace: the text after it is handed back as it came,
+     * so a log message keeps its sentence, and an address further into that
+     * text is not looked at. The scheme, the host and the port are never
+     * touched, nor is a fragment (a `?name=value` a hash router writes after
+     * the `#` is still read as a query, the safe side), nor a relative
+     * address (`/reset?token=...`), which is not reached at all.
      */
     public function scrubUrl(string $url): string
     {
-        if (! preg_match('#^https?://[^\s]+\?#i', $url)) {
+        if (preg_match('~^(\s*)(https?://\S+)(.*)$~is', $url, $parts) !== 1) {
             return $url;
         }
 
-        [$base, $query] = explode('?', $url, 2);
+        [, $lead, $address, $text] = $parts;
+
+        return $lead.$this->scrubAddress($address).$text;
+    }
+
+    private function scrubAddress(string $address): string
+    {
+        [$base, $query] = array_pad(explode('?', $address, 2), 2, null);
+        $base = $this->scrubPath($base);
+
+        if ($query === null) {
+            return $base;
+        }
+
         $fragment = '';
 
         if (str_contains($query, '#')) {
@@ -124,6 +167,27 @@ class Scrubber
     }
 
     /**
+     * Mask the token-shaped segments of the path. The authority (scheme,
+     * host, port) ends at the first slash after `//` and the path at a `#`;
+     * neither end is ever read as a segment.
+     */
+    private function scrubPath(string $base): string
+    {
+        if (preg_match('~^(https?://[^/#]*)([^#]*)(.*)$~is', $base, $parts) !== 1) {
+            return $base;
+        }
+
+        [, $authority, $path, $fragment] = $parts;
+
+        $segments = array_map(
+            fn (string $segment): string => preg_match(self::PATH_TOKEN, $segment) === 1 ? rawurlencode(self::MASK) : $segment,
+            explode('/', $path),
+        );
+
+        return $authority.implode('/', $segments).$fragment;
+    }
+
+    /**
      * The words that name a secret in CODE, beyond the request keys: an
      * `$apiKey`, a `$signingKey`, a `withBasicAuth()`, a `$dsn` holding a
      * password. A false positive costs one line of context; the list is
@@ -138,14 +202,16 @@ class Scrubber
      * lives: `$secret = 'correct horse battery';` six lines above a throw
      * would travel in clear while the request field of the same name is
      * masked. A line goes whole when an identifier containing a needle is
-     * followed by a value: an assignment or key separator (`=`, `=>`, `:`), a
-     * quoted name before a comma (`define('API_KEY', ...)`), or a call whose
-     * first argument is a literal (`setApiKey('sk_live...')`). A line that
-     * only USES the name (`Hash::check($password, ...)`, `csrf_token()`,
+     * followed by a value: an assignment or key separator (`=`, `=>`, a single
+     * `:`), a quoted name before a comma (`define('API_KEY', ...)`), or a call
+     * whose first argument is a literal (`setApiKey('sk_live...')`). A line
+     * that only USES the name (`Hash::check($password, ...)`, `csrf_token()`,
      * WordPress's `get_the_author()` against a list holding `auth`) carries no
      * value and stays: masking by bare substring made a WordPress snippet
-     * unreadable. A literal that names none of the words still travels; the
-     * documentation says so.
+     * unreadable. So does a static call: `::` is a scope, not a separator, or
+     * `Auth::user()` and `TokenMismatchException::expired()` would go, the
+     * line of the throw included. A literal that names none of the words
+     * still travels; the documentation says so.
      *
      * @param  array<int, string>  $lines
      * @return array<int, string>
@@ -153,7 +219,7 @@ class Scrubber
     public function scrubLines(array $lines): array
     {
         return array_map(
-            fn (string $line): string => $this->namesAValue($line) ? static::MASK : $line,
+            fn (string $line): string => $this->namesAValue($line) ? self::MASK : $line,
             $lines,
         );
     }
@@ -169,8 +235,9 @@ class Scrubber
 
             // An assignment or key separator, a quoted name before a comma,
             // or a call whose first argument is a literal; never a bare
-            // comma, or `Hash::check($secretGuess, $hash)` would go too.
-            if (preg_match('/'.preg_quote($needle, '/').'\w*(?:[\'"]?\s*(?:=>|=|:)|[\'"]\s*,|\(\s*[\'"])/i', $line) === 1) {
+            // comma, or `Hash::check($secretGuess, $hash)` would go too, and
+            // never the first colon of `::`, or every `Auth::` line would.
+            if (preg_match('/'.preg_quote($needle, '/').'\w*(?:[\'"]?\s*(?:=>|=|:(?!:))|[\'"]\s*,|\(\s*[\'"])/i', $line) === 1) {
                 return true;
             }
         }
