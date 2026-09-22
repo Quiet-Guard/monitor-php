@@ -40,9 +40,87 @@ class Scrubber
             if (is_array($value)) {
                 $data[$key] = $this->scrub($value);
             }
+
+            if (is_string($value)) {
+                $data[$key] = $this->scrubString($value);
+            }
         }
 
         return $data;
+    }
+
+    /**
+     * A value that is a JSON object, or a URL carrying a query string, holds
+     * named values of its own, and the rule that masks a named value has to
+     * reach them.
+     *
+     * Livewire is the case that forced it: `components.*.snapshot` is a JSON
+     * STRING, so a password typed into a component sailed past a scrubber
+     * that only descends into arrays. And a reset link carries its token and
+     * its signature in the query, where no key ever named them.
+     */
+    private function scrubString(string $value): string
+    {
+        $trimmed = ltrim($value);
+
+        if (str_starts_with($trimmed, '{') || str_starts_with($trimmed, '[')) {
+            $decoded = json_decode($value, true, 512, JSON_BIGINT_AS_STRING);
+
+            if (is_array($decoded)) {
+                $scrubbed = $this->scrub($decoded);
+
+                // Nothing inside named a secret: the value goes as it came,
+                // byte for byte. Encoding it again is not neutral (`{}` comes
+                // back `[]`, every accent grows into the six bytes of
+                // `\u00e9`), and a French snapshot that triples can cross the
+                // bound that drops a whole context. Masking must never be the
+                // reason a report loses what it held.
+                if ($scrubbed === $decoded) {
+                    return $value;
+                }
+
+                $encoded = json_encode($scrubbed, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
+
+                // A value that held a secret and cannot be written back masked
+                // (a literal past the float range decodes to INF, which
+                // json_encode refuses) goes whole: handing it back as it came
+                // would send the secret this very call just found.
+                return $encoded === false ? static::MASK : $encoded;
+            }
+        }
+
+        return $this->scrubUrl($value);
+    }
+
+    /**
+     * Mask the named values of a URL's query string, and nothing else: the
+     * path is what says where the application broke.
+     */
+    public function scrubUrl(string $url): string
+    {
+        if (! preg_match('#^https?://[^\s]+\?#i', $url)) {
+            return $url;
+        }
+
+        [$base, $query] = explode('?', $url, 2);
+        $fragment = '';
+
+        if (str_contains($query, '#')) {
+            [$query, $fragment] = explode('#', $query, 2);
+            $fragment = '#'.$fragment;
+        }
+
+        $pairs = array_map(function (string $pair): string {
+            [$name, $value] = array_pad(explode('=', $pair, 2), 2, null);
+
+            if ($value === null || ! $this->matches(strtolower(rawurldecode($name)))) {
+                return $pair;
+            }
+
+            return $name.'='.rawurlencode(self::MASK);
+        }, explode('&', $query));
+
+        return $base.'?'.implode('&', $pairs).$fragment;
     }
 
     /**
