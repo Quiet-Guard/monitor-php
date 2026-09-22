@@ -93,8 +93,8 @@ in every payload, and stack-trace frame arguments are never sent: only file,
 line, function, class and call type. From version 0.3 the trace starts at the
 throw site and each application frame carries a source snippet, the five lines
 on each side of its line (`Payload\SourceSnippet`); a dependency's frames never
-do, and a snippet line that names a scrubbed key is masked whole, because source
-code is where a hardcoded secret lives.
+do, and a snippet line that names a scrubbed key and gives it a value is masked
+whole, because source code is where a hardcoded secret lives.
 
 ## Documentation
 

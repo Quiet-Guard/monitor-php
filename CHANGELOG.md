@@ -20,7 +20,7 @@ All notable changes to `quiet-guard/monitor-php`.
   with the mask when it held a secret and cannot be written back.
 - A string that starts with an absolute `http(s)` URL is masked as an address
   (`Scrubber::scrubUrl()`, public): the values of the query-string parameters
-  whose name matches, the `name=value` pairs of the fragment, and every path
+  and of the fragment's `name=value` pairs whose name matches, and every path
   segment made of forty letters or digits in a row, whatever the list says. A
   password reset link carries its token in the query or in the path
   (`/reset-password/{token}` in Breeze, Fortify and Jetstream), and a context
@@ -29,6 +29,13 @@ All notable changes to `quiet-guard/monitor-php`.
   port and a userinfo travel as they came; a relative address is not reached.
   The text after the URL is handed back as it came, except a pair opened by
   `&`, `?` or `#` whose name matches.
+- A source line that gives a value to an array index named in quotes is masked
+  whole. A secret hardcoded into an array (`$config['password'] = '...'`,
+  `$headers['Authorization'] = 'Bearer ...'`) travelled in clear in a snippet,
+  since the `']` between the name and the `=` matched none of the value
+  shapes. A comparison with such an index counts as a value, as it does for a
+  variable, since its other side may be the secret itself; an index that is a
+  variable (`$data[$key] = ...`) is not read as a name.
 
 ### Fixed
 
@@ -36,16 +43,20 @@ All notable changes to `quiet-guard/monitor-php`.
   of `::` read as a key separator, so any line naming a needle before one
   (`Auth::user()`, `TokenMismatchException::expired()`) was masked whole, the
   line of the throw included. `::` is a scope now.
-- A term of the list is tried in both spellings in a source line, so a
-  hardcoded `'php-auth-pw' => '...'` is masked under `php_auth_pw`. The line
-  itself is never rewritten, and the words of `Scrubber::LINE_NEEDLES` keep
-  their one spelling: the other one of `sk_` ends an ordinary word.
+- A term is tried in its other spelling in a source line when a hyphen or an
+  underscore sits inside it, between two letters or digits, so a hardcoded
+  `'php-auth-pw' => '...'` is masked under `php_auth_pw`. The line itself is
+  never rewritten, and a term that starts or ends with a separator keeps its
+  one spelling, a configured one and a word of `Scrubber::LINE_NEEDLES` alike:
+  the other one of WordPress's `db_` starts an ordinary word (`'db-new'`), the
+  other one of `sk_` ends one (`'disk-usage'`).
 
 ### Changed
 
-- `Reporter::sendLogs()` masks the message of a log as well as its context,
-  since the strings of the batch are opened: a message that starts with a URL,
-  or that is JSON, is masked like any other value.
+- `Reporter::sendLogs()` reaches the message of a log as well as its context,
+  since the strings of the batch are opened: when a message starts with a URL
+  or is JSON, the values it carries are masked by the rules of any other
+  string, and the rest of its text is kept.
 
 ## v0.3.0
 
