@@ -20,7 +20,8 @@ namespace QuietGuard\Monitor\Support;
  * decoded and masked by key like any array, and a string that starts with an
  * absolute http(s) URL has its query string masked by name, its token-shaped
  * path segments masked outright and the password of its userinfo masked (see
- * scrubUrl()).
+ * scrubUrl()); a string that starts with an address of any other scheme, a
+ * DSN, has the password of its userinfo masked and nothing else.
  */
 class Scrubber
 {
@@ -177,19 +178,57 @@ class Scrubber
     /**
      * Whether text that opens like JSON holds a quoted name followed by a
      * colon (`"password":`) that matches, compared as a key is (matches()).
+     *
+     * One pass from left to right, string literal after string literal, the
+     * way a decoder reads them: a `\` escapes the character after it, the
+     * literal is decoded to read its name as the decoder would (`\u0077` is
+     * `w`), and only a literal followed by optional whitespace and a `:` is a
+     * name. Never a regular expression: the value is whatever a visitor
+     * posted, unbounded on the client and read before the server's bound,
+     * and a pattern that retries from every quote took seconds on a few
+     * hundred kilobytes of escaped quotes, a worker per report.
      */
     private function namesASecretKey(string $value): bool
     {
-        if (preg_match_all('/"((?:[^"\\\\]++|\\\\.)*+)"\s*+:/s', $value, $found) === false) {
-            return false;
-        }
+        $length = strlen($value);
+        $offset = 0;
 
-        foreach ($found[1] as $name) {
-            $decoded = json_decode('"'.$name.'"');
+        while (($open = strpos($value, '"', $offset)) !== false) {
+            $end = $open + 1;
 
-            if ($this->matches(strtolower(is_string($decoded) ? $decoded : $name))) {
-                return true;
+            while (true) {
+                $end += strcspn($value, '"\\', $end);
+
+                if ($end >= $length) {
+                    // A literal that never closes: nothing after it is a name.
+                    return false;
+                }
+
+                if ($value[$end] === '"') {
+                    break;
+                }
+
+                // A backslash: the character after it is part of the literal.
+                $end += 2;
+
+                if ($end >= $length) {
+                    return false;
+                }
             }
+
+            $next = $end + 1;
+            $next += strspn($value, " \t\n\r", $next);
+
+            if ($next < $length && $value[$next] === ':') {
+                $literal = substr($value, $open, $end - $open + 1);
+                $name = json_decode($literal);
+
+                if ($this->matches(strtolower(is_string($name) ? $name : substr($literal, 1, -1)))) {
+                    return true;
+                }
+            }
+
+            $offset = $end + 1;
         }
 
         return false;
@@ -218,17 +257,19 @@ class Scrubber
      *
      * The scheme, the host and the port travel as they came, and so does the
      * user of a userinfo; its password does not (`user:%5Bscrubbed%5D@`),
-     * since a URL typed into a form field, a webhook or a DSN, carries it
-     * there. A relative address (`/reset?token=...`) is not reached at all. A
-     * fragment is never read as path, but its
-     * `name=value` pairs are, since that is where a hash router writes its
-     * query (`#/reset?token=abc`) and an OAuth redirect its token
+     * since a URL typed into a form field or a webhook setting carries it
+     * there. A string that starts with an address of another scheme, a DSN
+     * such as `mysql://root:secret@db/app`, has that password masked and
+     * nothing else (scrubOtherAddress()). A relative address
+     * (`/reset?token=...`) is not reached at all. A fragment is never read as
+     * path, but its `name=value` pairs are, since that is where a hash router
+     * writes its query (`#/reset?token=abc`) and an OAuth redirect its token
      * (`#access_token=...`).
      */
     public function scrubUrl(string $url): string
     {
         if (preg_match('~^(\s*)(https?://\S+)(.*)$~is', $url, $parts) !== 1) {
-            return $url;
+            return $this->scrubOtherAddress($url);
         }
 
         [, $lead, $address, $text] = $parts;
@@ -289,24 +330,46 @@ class Scrubber
     }
 
     /**
+     * A string that starts with an address of another scheme, a DSN above
+     * all (`mysql://root:secret@db/app`, `redis://:secret@cache:6379`): the
+     * password of its userinfo is masked, and nothing else is read. The query
+     * and path rules are the web's; a DSN's path is a database name and its
+     * query its options.
+     */
+    private function scrubOtherAddress(string $value): string
+    {
+        if (preg_match('~^(\s*)([a-z][a-z0-9+.\-]*://[^/?#\s]*)~i', $value, $parts) !== 1) {
+            return $value;
+        }
+
+        [$matched, $lead, $authority] = $parts;
+
+        return $lead.$this->scrubUserinfo($authority).substr($value, strlen($matched));
+    }
+
+    /**
      * The authority with the password of its userinfo masked: everything
      * between the first `:` after `//` and the LAST `@`, since the host is
      * what follows the last one. The user stays, it says whose account the
-     * address used; an authority with no `@`, or a userinfo with no
-     * password, comes back as it came.
+     * address used, and so a credential written as the user
+     * (`https://ghp_...@github.com`) stays with it; an authority with no `@`,
+     * or a userinfo with no password, comes back as it came.
      */
     private function scrubUserinfo(string $authority): string
     {
-        if (preg_match('~^(https?://)(.*)@([^@]*)$~is', $authority, $parts) !== 1) {
+        $start = strpos($authority, '://');
+        $at = strrpos($authority, '@');
+
+        if ($start === false || $at === false || $at < $start) {
             return $authority;
         }
 
-        [, $scheme, $userinfo, $host] = $parts;
-        [$user, $password] = array_pad(explode(':', $userinfo, 2), 2, null);
+        $start += 3;
+        [$user, $password] = array_pad(explode(':', substr($authority, $start, $at - $start), 2), 2, null);
 
         return $password === null || $password === ''
             ? $authority
-            : $scheme.$user.':'.rawurlencode(self::MASK).'@'.$host;
+            : substr($authority, 0, $start).$user.':'.rawurlencode(self::MASK).substr($authority, $at);
     }
 
     /**
