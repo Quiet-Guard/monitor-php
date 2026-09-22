@@ -10,21 +10,22 @@ use QuietGuard\Monitor\Support\ValueRedactor;
 class Config
 {
     /**
-     * L'adresse du service, appliquée quand rien n'est configuré.
+     * The address of the service, applied when nothing is configured.
      *
-     * Elle vit ICI, dans le code qui lit la valeur, et non seulement dans le
-     * gabarit de configuration publiable. Un gabarit est une COPIE : la page
-     * d'installation dit à chaque lecteur de le publier, sa copie est figée à
-     * la version installée, et elle gagne sur les défauts du paquet. Un défaut
-     * écrit là seulement n'atteint donc personne, exactement le cas mesuré sur
-     * quietmetrics.dev le 2026-09-08, où la config publiée en 0.2.0 rendait
-     * `url` nulle malgré le défaut ajouté en 0.2.1.
+     * It lives HERE, in the code that reads the value, and not only in the
+     * publishable configuration template. A template is a COPY: the
+     * installation page tells every reader to publish it, their copy is frozen
+     * at the installed version, and it wins over the package's defaults. A
+     * default written there alone therefore reaches nobody, exactly the case
+     * measured on quietmetrics.dev on 2026-09-08, where the configuration
+     * published under 0.2.0 made `url` null despite the default added in
+     * 0.2.1.
      */
     public const HOSTED_URL = 'https://quietguard.dev';
 
     /**
-     * L'adresse de base, déjà normalisée : sans espace, sans barre finale et
-     * sans préfixe d'API, puisque chaque appel porte le sien.
+     * The base address, already normalised: no whitespace, no trailing slash
+     * and no API prefix, since every call carries its own.
      */
     public readonly string $url;
 
@@ -54,14 +55,14 @@ class Config
     }
 
     /**
-     * Une adresse de base utilisable, quoi qu'on nous ait donné.
+     * A usable base address, whatever we were given.
      *
-     * Retire le préfixe d'API que l'appelant a pu fournir : chaque chemin
-     * porte déjà son `/api/v1`, et « l'URL de base de votre serveur » se lit
-     * aussi bien « l'adresse de l'API ». Les deux lectures doivent marcher,
-     * parce que la mauvaise répond 404 partout et ressemble trait pour trait
-     * à une clé invalide. Une règle qu'il faut respecter est plus faible
-     * qu'une forme qu'on ne peut pas rater.
+     * Strips the API prefix the caller may have supplied: every path already
+     * carries its `/api/v1`, and "the base URL of your server" reads just as
+     * well as "the address of the API". Both readings have to work, because
+     * the wrong one answers 404 everywhere and looks exactly like an invalid
+     * key. A rule that has to be obeyed is weaker than a shape that cannot be
+     * got wrong.
      */
     public static function normaliseUrl(?string $url): string
     {
@@ -80,11 +81,11 @@ class Config
     }
 
     /**
-     * La clé est la seule chose que nous ne pouvons pas deviner.
+     * The key is the one thing we cannot guess.
      *
-     * L'adresse en est une : elle vaut le service hébergé par défaut. Exiger
-     * les deux faisait échouer une installation à laquelle il ne manquait
-     * rien d'irremplaçable, sous un message qui accusait la clé.
+     * The address is one we can: it defaults to the hosted service. Requiring
+     * both made an installation fail that lacked nothing irreplaceable, under
+     * a message that blamed the key.
      */
     public function isConfigured(): bool
     {

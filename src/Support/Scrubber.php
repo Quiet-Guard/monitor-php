@@ -11,13 +11,16 @@ namespace QuietGuard\Monitor\Support;
  * hyphen and an underscore are one character: Symfony names every header
  * lower-cased with hyphens, so the password of a Basic auth request arrives as
  * "php-auth-pw" and an API key header as "x-api-key", while the lists write
- * "php_auth_pw" and "api_key".
+ * "php_auth_pw" and "api_key". And a configured name with a separator inside
+ * it is also found in a name written with none: Supabase and Kong send their
+ * key as "apikey", a form field is "apiKey" (see $compactNames).
  *
  * Two kinds of string value hold secrets of their own, and the scrubber opens
  * both: a JSON object or array written as a string (Livewire's snapshot) is
  * decoded and masked by key like any array, and a string that starts with an
- * absolute http(s) URL has its query string masked by name and its
- * token-shaped path segments masked outright (see scrubUrl()).
+ * absolute http(s) URL has its query string masked by name, its token-shaped
+ * path segments masked outright and the password of its userinfo masked (see
+ * scrubUrl()).
  */
 class Scrubber
 {
@@ -36,6 +39,22 @@ class Scrubber
      * @var array<int, string>
      */
     private array $names;
+
+    /**
+     * The configured needles that carry a separator INSIDE them, written
+     * with none (compactName()): `api_key` is also looked for as `apikey` in
+     * a name stripped of its own hyphens and underscores, so `apikey`,
+     * `apiKey`, `x-apikey` and `X-API-KEY` all match it.
+     *
+     * Only an interior separator is dropped. A needle that starts or ends
+     * with one keeps its spelling, since without it the needle is an
+     * ordinary word: WordPress's `db_` would become `db` and mask `feedback`.
+     * A needle with no separator at all has nothing to drop and matches as
+     * it always did.
+     *
+     * @var array<int, string>
+     */
+    private array $compactNames;
 
     /**
      * What a source line is read with (namesAValue()): each configured needle
@@ -67,6 +86,7 @@ class Scrubber
         $needles = array_merge($keys, self::LINE_NEEDLES);
 
         $this->names = array_map(self::name(...), $keys);
+        $this->compactNames = array_values(array_filter(array_map(self::compactName(...), $keys)));
         $this->lineNeedles = array_values(array_unique(array_merge(
             $needles,
             array_map(self::otherSpelling(...), $needles),
@@ -137,9 +157,42 @@ class Scrubber
                 // would send the secret this very call just found.
                 return $encoded === false ? self::MASK : $encoded;
             }
+
+            // JSON the decoder refuses cannot be masked key by key, and handing
+            // it back whole sends every secret it names. A client that masks
+            // values by shape over the whole payload is how it happens: a
+            // Livewire snapshot carrying a sixteen-digit timestamp that passes
+            // Luhn comes out with `[redacted:card]` where a number was, which is
+            // no longer JSON, the password beside it included. When a quoted
+            // name followed by `:` matches, the value goes whole; text that
+            // merely opens with a bracket names nothing and stays.
+            if ($this->namesASecretKey($value)) {
+                return self::MASK;
+            }
         }
 
         return $this->scrubUrl($value);
+    }
+
+    /**
+     * Whether text that opens like JSON holds a quoted name followed by a
+     * colon (`"password":`) that matches, compared as a key is (matches()).
+     */
+    private function namesASecretKey(string $value): bool
+    {
+        if (preg_match_all('/"((?:[^"\\\\]++|\\\\.)*+)"\s*+:/s', $value, $found) === false) {
+            return false;
+        }
+
+        foreach ($found[1] as $name) {
+            $decoded = json_decode('"'.$name.'"');
+
+            if ($this->matches(strtolower(is_string($decoded) ? $decoded : $name))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -163,9 +216,11 @@ class Scrubber
      * (scrubPairs()): a URL written by hand with an unencoded space
      * (`?q=hello world&token=abc`) pushes the rest of its own query there.
      *
-     * The scheme, the host, the port and a userinfo (`user:pass@`) travel as
-     * they came, and so does a relative address (`/reset?token=...`), which
-     * is not reached at all. A fragment is never read as path, but its
+     * The scheme, the host and the port travel as they came, and so does the
+     * user of a userinfo; its password does not (`user:%5Bscrubbed%5D@`),
+     * since a URL typed into a form field, a webhook or a DSN, carries it
+     * there. A relative address (`/reset?token=...`) is not reached at all. A
+     * fragment is never read as path, but its
      * `name=value` pairs are, since that is where a hash router writes its
      * query (`#/reset?token=abc`) and an OAuth redirect its token
      * (`#access_token=...`).
@@ -211,10 +266,11 @@ class Scrubber
     }
 
     /**
-     * Mask the token-shaped segments of the path. The authority (scheme,
-     * userinfo, host, port) ends at the first slash after `//` or at a `#`,
-     * and the path at a `#`; neither the authority nor the fragment is ever
-     * read as a segment, and the fragment goes through scrubPairs().
+     * Mask the token-shaped segments of the path and the password of the
+     * userinfo. The authority (scheme, userinfo, host, port) ends at the
+     * first slash after `//` or at a `#`, and the path at a `#`; neither the
+     * authority nor the fragment is ever read as a segment, and the fragment
+     * goes through scrubPairs().
      */
     private function scrubPath(string $base): string
     {
@@ -229,7 +285,28 @@ class Scrubber
             explode('/', $path),
         );
 
-        return $authority.implode('/', $segments).$this->scrubPairs($fragment);
+        return $this->scrubUserinfo($authority).implode('/', $segments).$this->scrubPairs($fragment);
+    }
+
+    /**
+     * The authority with the password of its userinfo masked: everything
+     * between the first `:` after `//` and the LAST `@`, since the host is
+     * what follows the last one. The user stays, it says whose account the
+     * address used; an authority with no `@`, or a userinfo with no
+     * password, comes back as it came.
+     */
+    private function scrubUserinfo(string $authority): string
+    {
+        if (preg_match('~^(https?://)(.*)@([^@]*)$~is', $authority, $parts) !== 1) {
+            return $authority;
+        }
+
+        [, $scheme, $userinfo, $host] = $parts;
+        [$user, $password] = array_pad(explode(':', $userinfo, 2), 2, null);
+
+        return $password === null || $password === ''
+            ? $authority
+            : $scheme.$user.':'.rawurlencode(self::MASK).'@'.$host;
     }
 
     /**
@@ -337,10 +414,18 @@ class Scrubber
 
     private function matches(string $key): bool
     {
-        $key = self::name($key);
+        $name = self::name($key);
 
         foreach ($this->names as $needle) {
-            if ($needle !== '' && str_contains($key, $needle)) {
+            if ($needle !== '' && str_contains($name, $needle)) {
+                return true;
+            }
+        }
+
+        $compact = str_replace(['-', '_'], '', $name);
+
+        foreach ($this->compactNames as $needle) {
+            if (str_contains($compact, $needle)) {
                 return true;
             }
         }
@@ -356,6 +441,22 @@ class Scrubber
     private static function name(string $name): string
     {
         return str_replace('-', '_', strtolower($name));
+    }
+
+    /**
+     * A configured needle written without its separators, when it carries
+     * one between two of its characters and neither starts nor ends with one:
+     * `api_key` gives `apikey`, `x-forwarded-for` gives `xforwardedfor`,
+     * while `token` (nothing to drop) and WordPress's `db_` (the separator
+     * is part of the word) give nothing (see $compactNames).
+     */
+    private static function compactName(string $needle): ?string
+    {
+        if (preg_match('/^[^-_].*[-_].*[^-_]$/s', $needle) !== 1) {
+            return null;
+        }
+
+        return str_replace(['-', '_'], '', $needle);
     }
 
     /**
