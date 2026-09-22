@@ -30,28 +30,43 @@ class Scrubber
     private const PATH_TOKEN = '/^[A-Za-z0-9]{40,}$/';
 
     /**
-     * Lower-cased needles, as configured: what a source line is read with
-     * (namesAValue()), where a hyphen is not an underscore.
-     *
-     * @var array<int, string>
-     */
-    private array $keys;
-
-    /**
-     * The same needles as names (see name()): what a key and a query-string
-     * name are matched with.
+     * The configured needles as names (see name()): what a key and a
+     * query-string name are matched with.
      *
      * @var array<int, string>
      */
     private array $names;
 
     /**
+     * What a source line is read with (namesAValue()): each configured needle
+     * as written and with its hyphens and underscores swapped, then the line
+     * words as written.
+     *
+     * The line itself is never rewritten: read with a hyphen as an
+     * underscore, ordinary code goes too, such as
+     * `->header('Referrer-Policy', ...)` against a list holding `referrer`.
+     * Trying the other spelling of a configured name catches a hardcoded
+     * `'php-auth-pw' => ...` and nothing else. The line words keep their one
+     * spelling, since the other one of `sk_` is the end of an ordinary word
+     * (`'disk-usage' => 90`).
+     *
+     * @var array<int, string>
+     */
+    private array $lineNeedles;
+
+    /**
      * @param  array<int, string>  $keys
      */
     public function __construct(array $keys = [])
     {
-        $this->keys = array_map('strtolower', $keys);
-        $this->names = array_map(self::name(...), $this->keys);
+        $keys = array_map('strtolower', $keys);
+
+        $this->names = array_map(self::name(...), $keys);
+        $this->lineNeedles = array_values(array_unique(array_merge(
+            $keys,
+            array_map(fn (string $key): string => strtr($key, '-_', '_-'), $keys),
+            self::LINE_NEEDLES,
+        )));
     }
 
     /**
@@ -254,7 +269,8 @@ class Scrubber
      * unreadable. So does a static call: `::` is a scope, not a separator, or
      * `Auth::user()` and `TokenMismatchException::expired()` would go, the
      * line of the throw included. A literal that names none of the words
-     * still travels; the documentation says so.
+     * still travels; the documentation says so. A configured name is tried in
+     * both spellings, `php_auth_pw` and `php-auth-pw` (see $lineNeedles).
      *
      * @param  array<int, string>  $lines
      * @return array<int, string>
@@ -271,7 +287,7 @@ class Scrubber
     {
         $lower = strtolower($line);
 
-        foreach (array_unique(array_merge($this->keys, self::LINE_NEEDLES)) as $needle) {
+        foreach ($this->lineNeedles as $needle) {
             if ($needle === '' || ! str_contains($lower, $needle)) {
                 continue;
             }
