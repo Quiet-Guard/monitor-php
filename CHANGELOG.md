@@ -12,12 +12,25 @@ All notable changes to `quiet-guard/monitor-php`.
   `php-auth-pw` while the lists write `php_auth_pw`, and travelled in clear;
   `x-api-key` got past `api_key` the same way. A hyphen and an underscore are
   one character now when a key or a query-string name is matched.
+- A name with a separator inside it is also found in a key written without
+  one. Supabase and Kong send their key as an `apikey` header and a form field
+  is `apiKey`, which hold no `api_key`, so they travelled in clear. A
+  configured name that carries a hyphen or an underscore between two of its
+  characters is now also looked for, without them, in a key or a query-string
+  name stripped of its own. A name with no separator matches as before, and
+  one that starts or ends with a separator keeps its spelling: WordPress's
+  `db_` written as `db` would mask `feedback`.
 - `Scrubber::scrub()` opens a JSON object or array written as a string, such
   as Livewire's `components.*.snapshot`, the state of a component with a typed
   password in it. The scrubber only descended into arrays, so the string
   travelled as it came. It is decoded, masked by key and written back now;
   handed back byte for byte when nothing inside matched, and replaced whole
-  with the mask when it held a secret and cannot be written back.
+  with the mask when it held a secret and cannot be written back. A string
+  that opens like JSON and does not decode is replaced whole with the mask
+  when a quoted name followed by `:` in it matches: a client that masks
+  values by shape over the whole payload turns a sixteen-digit number that
+  passes Luhn into `[redacted:card]`, the snapshot is no longer JSON, and the
+  password beside that number travelled with it.
 - A string that starts with an absolute `http(s)` URL is masked as an address
   (`Scrubber::scrubUrl()`, public): the values of the query-string parameters
   and of the fragment's `name=value` pairs whose name matches, and every path
@@ -26,7 +39,9 @@ All notable changes to `quiet-guard/monitor-php`.
   (`/reset-password/{token}` in Breeze, Fortify and Jetstream), and a context
   value holding one, Symfony's `request.url` for instance, carried it in
   clear. A number, a slug, a UUID or a ULID stays; the scheme, the host, the
-  port and a userinfo travel as they came; a relative address is not reached.
+  port and the user of a userinfo travel as they came, its password is
+  masked (`user:%5Bscrubbed%5D@`), since a URL typed into a form field, a
+  webhook or a DSN, carries it; a relative address is not reached.
   The text after the URL is handed back as it came, except a pair opened by
   `&`, `?` or `#` whose name matches.
 - A source line that gives a value to an array index named in quotes is masked
