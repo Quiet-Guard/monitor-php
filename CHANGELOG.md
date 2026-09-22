@@ -2,6 +2,51 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
+## v0.3.1
+
+### Security
+
+- A header spelled with hyphens is masked like its underscore spelling.
+  Symfony's request, which Laravel's extends, names every header lower-cased
+  with hyphens, so the password of an HTTP Basic request arrived as
+  `php-auth-pw` while the lists write `php_auth_pw`, and travelled in clear;
+  `x-api-key` got past `api_key` the same way. A hyphen and an underscore are
+  one character now when a key or a query-string name is matched.
+- `Scrubber::scrub()` opens a JSON object or array written as a string, such
+  as Livewire's `components.*.snapshot`, the state of a component with a typed
+  password in it. The scrubber only descended into arrays, so the string
+  travelled as it came. It is decoded, masked by key and written back now;
+  handed back byte for byte when nothing inside matched, and replaced whole
+  with the mask when it held a secret and cannot be written back.
+- A string that starts with an absolute `http(s)` URL is masked as an address
+  (`Scrubber::scrubUrl()`, public): the values of the query-string parameters
+  whose name matches, the `name=value` pairs of the fragment, and every path
+  segment made of forty letters or digits in a row, whatever the list says. A
+  password reset link carries its token in the query or in the path
+  (`/reset-password/{token}` in Breeze, Fortify and Jetstream), and a context
+  value holding one, Symfony's `request.url` for instance, carried it in
+  clear. A number, a slug, a UUID or a ULID stays; the scheme, the host, the
+  port and a userinfo travel as they came; a relative address is not reached.
+  The text after the URL is handed back as it came, except a pair opened by
+  `&`, `?` or `#` whose name matches.
+
+### Fixed
+
+- A snippet line that calls a static method keeps its context. The first colon
+  of `::` read as a key separator, so any line naming a needle before one
+  (`Auth::user()`, `TokenMismatchException::expired()`) was masked whole, the
+  line of the throw included. `::` is a scope now.
+- A term of the list is tried in both spellings in a source line, so a
+  hardcoded `'php-auth-pw' => '...'` is masked under `php_auth_pw`. The line
+  itself is never rewritten, and the words of `Scrubber::LINE_NEEDLES` keep
+  their one spelling: the other one of `sk_` ends an ordinary word.
+
+### Changed
+
+- `Reporter::sendLogs()` masks the message of a log as well as its context,
+  since the strings of the batch are opened: a message that starts with a URL,
+  or that is JSON, is masked like any other value.
+
 ## v0.3.0
 
 ### Added
