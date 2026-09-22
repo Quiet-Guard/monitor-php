@@ -187,8 +187,20 @@ class Scrubber
      * posted, unbounded on the client and read before the server's bound,
      * and a pattern that retries from every quote took seconds on a few
      * hundred kilobytes of escaped quotes, a worker per report.
+     *
+     * Then a second reading that pairs nothing (namesASecretKeyIgnoringEscapes()),
+     * since text broken by a stray quote defeats the first.
      */
     private function namesASecretKey(string $value): bool
+    {
+        return $this->namesASecretKeyAsDecoded($value) || $this->namesASecretKeyIgnoringEscapes($value);
+    }
+
+    /**
+     * The first reading of namesASecretKey(): literals paired as a decoder
+     * pairs them.
+     */
+    private function namesASecretKeyAsDecoded(string $value): bool
     {
         $length = strlen($value);
         $offset = 0;
@@ -220,15 +232,50 @@ class Scrubber
             $next += strspn($value, " \t\n\r", $next);
 
             if ($next < $length && $value[$next] === ':') {
-                $literal = substr($value, $open, $end - $open + 1);
-                $name = json_decode($literal);
+                $raw = substr($value, $open + 1, $end - $open - 1);
+                // Only an escape makes the decoded name differ from the raw one.
+                $name = str_contains($raw, '\\') ? json_decode('"'.$raw.'"') : $raw;
 
-                if ($this->matches(strtolower(is_string($name) ? $name : substr($literal, 1, -1)))) {
+                if ($raw !== '' && $this->matches(strtolower(is_string($name) ? $name : $raw))) {
                     return true;
                 }
             }
 
             $offset = $end + 1;
+        }
+
+        return false;
+    }
+
+    /**
+     * The second reading of namesASecretKey(): every `"name":` whose name
+     * holds no quote and no backslash, wherever it sits, paired with nothing
+     * before it.
+     *
+     * The first reading pairs quotes as a decoder would, and that is its
+     * weakness on text that is broken precisely because a quote went
+     * unescaped: `{"a":"x"y", "password":"z"}` or a value cut short before its
+     * closing quote shifts every pair after it, and the `"password":` further
+     * on reads as the inside of a value. This one looks for the shape alone.
+     * Possessive, anchored on a quote and restarted from the quote that
+     * closed the previous name, so every character is read a bounded number
+     * of times: linear, as the first reading is.
+     */
+    private function namesASecretKeyIgnoringEscapes(string $value): bool
+    {
+        $offset = 0;
+
+        while (preg_match('/"([^"\\\\]*+)"\s*+:/', $value, $found, PREG_OFFSET_CAPTURE, $offset) === 1) {
+            // No backslash can sit in the name, so there is nothing to
+            // decode: the name reads as it is written.
+            [$name, $start] = $found[1];
+
+            if ($name !== '' && $this->matches(strtolower($name))) {
+                return true;
+            }
+
+            // Restart on the quote that closed this name: it may open the next.
+            $offset = $start + strlen($name);
         }
 
         return false;
@@ -282,10 +329,17 @@ class Scrubber
         [$base, $query] = array_pad(explode('?', $address, 2), 2, null);
         $base = $this->scrubPath($base);
 
-        if ($query === null) {
-            return $base;
-        }
+        return $query === null ? $base : $base.'?'.$this->scrubQuery($query);
+    }
 
+    /**
+     * A query string, its fragment included, with the value of every pair
+     * whose name matches masked. The rule of names, for an address of any
+     * scheme: a DSN carries its options there, a password among them
+     * (Predis reads `tcp://127.0.0.1:6379?password=...`).
+     */
+    private function scrubQuery(string $query): string
+    {
         $fragment = '';
 
         if (str_contains($query, '#')) {
@@ -303,7 +357,7 @@ class Scrubber
             return $name.'='.rawurlencode(self::MASK);
         }, explode('&', $query));
 
-        return $base.'?'.implode('&', $pairs).$fragment;
+        return implode('&', $pairs).$fragment;
     }
 
     /**
@@ -332,19 +386,26 @@ class Scrubber
     /**
      * A string that starts with an address of another scheme, a DSN above
      * all (`mysql://root:secret@db/app`, `redis://:secret@cache:6379`): the
-     * password of its userinfo is masked, and nothing else is read. The query
-     * and path rules are the web's; a DSN's path is a database name and its
-     * query its options.
+     * password of its userinfo is masked, and so is the value of every query
+     * pair whose name matches, since a DSN writes its options there
+     * (`tcp://127.0.0.1:6379?password=...`). The path-token rule is the
+     * web's alone: a DSN's path is a database name or a file. The address
+     * ends at the first whitespace and the text after it is not read.
      */
     private function scrubOtherAddress(string $value): string
     {
-        if (preg_match('~^(\s*)([a-z][a-z0-9+.\-]*://[^/?#\s]*)~i', $value, $parts) !== 1) {
+        if (preg_match('~^(\s*+)([a-z][a-z0-9+.\-]*+://)(\S*+)~i', $value, $parts) !== 1) {
             return $value;
         }
 
-        [$matched, $lead, $authority] = $parts;
+        [$matched, $lead, $scheme, $address] = $parts;
+        [$base, $query] = array_pad(explode('?', $address, 2), 2, null);
+        $authority = strcspn($base, '/#');
 
-        return $lead.$this->scrubUserinfo($authority).substr($value, strlen($matched));
+        return $lead
+            .$this->scrubUserinfo($scheme.substr($base, 0, $authority)).substr($base, $authority)
+            .($query === null ? '' : '?'.$this->scrubQuery($query))
+            .substr($value, strlen($matched));
     }
 
     /**
