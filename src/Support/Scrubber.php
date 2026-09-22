@@ -39,16 +39,20 @@ class Scrubber
 
     /**
      * What a source line is read with (namesAValue()): each configured needle
-     * as written and with its hyphens and underscores swapped, then the line
-     * words as written.
+     * and each line word, as written and in its other spelling
+     * (otherSpelling()).
      *
      * The line itself is never rewritten: read with a hyphen as an
      * underscore, ordinary code goes too, such as
      * `->header('Referrer-Policy', ...)` against a list holding `referrer`.
-     * Trying the other spelling of a configured name catches a hardcoded
-     * `'php-auth-pw' => ...` and nothing else. The line words keep their one
-     * spelling, since the other one of `sk_` is the end of an ordinary word
-     * (`'disk-usage' => 90`).
+     * The needle is what gets its other spelling, and only a hyphen or an
+     * underscore between two letters or digits is swapped: that catches a
+     * hardcoded `'php-auth-pw' => ...` under `php_auth_pw`. A needle that
+     * starts or ends with a separator keeps its one spelling, since its other
+     * one is the start or the end of an ordinary word: WordPress's `db_`
+     * would read `'db-new'`, the line word `sk_` would read `'disk-usage'`.
+     * The cost that remains is accepted: `logged_in` also reads `logged-in`,
+     * so a line such as `array('logged-in', ...)` goes.
      *
      * @var array<int, string>
      */
@@ -60,12 +64,12 @@ class Scrubber
     public function __construct(array $keys = [])
     {
         $keys = array_map('strtolower', $keys);
+        $needles = array_merge($keys, self::LINE_NEEDLES);
 
         $this->names = array_map(self::name(...), $keys);
         $this->lineNeedles = array_values(array_unique(array_merge(
-            $keys,
-            array_map(fn (string $key): string => strtr($key, '-_', '_-'), $keys),
-            self::LINE_NEEDLES,
+            $needles,
+            array_map(self::otherSpelling(...), $needles),
         )));
     }
 
@@ -261,16 +265,24 @@ class Scrubber
      * would travel in clear while the request field of the same name is
      * masked. A line goes whole when an identifier containing a needle is
      * followed by a value: an assignment or key separator (`=`, `=>`, a single
-     * `:`), a quoted name before a comma (`define('API_KEY', ...)`), or a call
-     * whose first argument is a literal (`setApiKey('sk_live...')`). A line
-     * that only USES the name (`Hash::check($password, ...)`, `csrf_token()`,
-     * WordPress's `get_the_author()` against a list holding `auth`) carries no
-     * value and stays: masking by bare substring made a WordPress snippet
-     * unreadable. So does a static call: `::` is a scope, not a separator, or
-     * `Auth::user()` and `TokenMismatchException::expired()` would go, the
-     * line of the throw included. A literal that names none of the words
-     * still travels; the documentation says so. A configured name is tried in
-     * both spellings, `php_auth_pw` and `php-auth-pw` (see $lineNeedles).
+     * `:`), an array index named in quotes and given one
+     * (`$headers['Authorization'] = 'Bearer ...'`), a quoted name before a
+     * comma (`define('API_KEY', ...)`), or a call whose first argument is a
+     * literal (`setApiKey('sk_live...')`). A comparison counts as a value,
+     * for a variable as for a quoted index (`$token === $expected`,
+     * `$config['password'] == '...'`): its other side may be the secret
+     * itself, written into the code. A line that only USES the name
+     * (`Hash::check($password, ...)`, `csrf_token()`, WordPress's
+     * `get_the_author()` against a list holding `auth`) carries no value and
+     * stays: masking by bare substring made a WordPress snippet unreadable.
+     * So does an index that is only read (`return $headers['Authorization'];`)
+     * or that is a variable (`$data[$key] = ...`), and so does a static call:
+     * `::` is a scope, not a separator, or `Auth::user()` and
+     * `TokenMismatchException::expired()` would go, the line of the throw
+     * included. A literal that names none of the words still travels; the
+     * documentation says so. A needle with a hyphen or an underscore inside
+     * it is tried in both spellings, `php_auth_pw` and `php-auth-pw` (see
+     * $lineNeedles).
      *
      * @param  array<int, string>  $lines
      * @return array<int, string>
@@ -292,11 +304,13 @@ class Scrubber
                 continue;
             }
 
-            // An assignment or key separator, a quoted name before a comma,
+            // An assignment or key separator, a quoted index followed by `=`
+            // (an assignment or a comparison), a quoted name before a comma,
             // or a call whose first argument is a literal; never a bare
-            // comma, or `Hash::check($secretGuess, $hash)` would go too, and
+            // comma, or `Hash::check($secretGuess, $hash)` would go too,
+            // never an unquoted index, or `$data[$key] = ...` would, and
             // never the first colon of `::`, or every `Auth::` line would.
-            if (preg_match('/'.preg_quote($needle, '/').'\w*(?:[\'"]?\s*(?:=>|=|:(?!:))|[\'"]\s*,|\(\s*[\'"])/i', $line) === 1) {
+            if (preg_match('/'.preg_quote($needle, '/').'\w*(?:[\'"]?\s*(?:=>|=|:(?!:))|[\'"]\s*\]\s*=|[\'"]\s*,|\(\s*[\'"])/i', $line) === 1) {
                 return true;
             }
         }
@@ -342,5 +356,20 @@ class Scrubber
     private static function name(string $name): string
     {
         return str_replace('-', '_', strtolower($name));
+    }
+
+    /**
+     * A line needle with every hyphen or underscore that sits between two
+     * letters or digits swapped for the other one, and nothing else touched:
+     * `php_auth_pw` gives `php-auth-pw`, `db_` and `sk_` stay as they are
+     * (see $lineNeedles).
+     */
+    private static function otherSpelling(string $needle): string
+    {
+        return (string) preg_replace_callback(
+            '/(?<=[a-z0-9])[-_](?=[a-z0-9])/',
+            fn (array $separator): string => $separator[0] === '-' ? '_' : '-',
+            $needle,
+        );
     }
 }
