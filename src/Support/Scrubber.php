@@ -118,13 +118,20 @@ class Scrubber
      * characters) is not, and stays, since the path is what says where the
      * application broke.
      *
-     * Only the leading URL is read, after any leading whitespace, and it ends
-     * at the first whitespace: the text after it is handed back as it came,
-     * so a log message keeps its sentence, and an address further into that
-     * text is not looked at. The scheme, the host and the port are never
-     * touched, nor is a fragment (a `?name=value` a hash router writes after
-     * the `#` is still read as a query, the safe side), nor a relative
-     * address (`/reset?token=...`), which is not reached at all.
+     * Only the leading URL is read as an address, after any leading
+     * whitespace, and it ends at the first whitespace: the text after it is
+     * handed back as it came, so a log message keeps its sentence, and a
+     * path further into that text is not looked at. One thing in that text
+     * is still masked, a pair opened by `&`, `?` or `#` whose name matches
+     * (scrubPairs()): a URL written by hand with an unencoded space
+     * (`?q=hello world&token=abc`) pushes the rest of its own query there.
+     *
+     * The scheme, the host, the port and a userinfo (`user:pass@`) travel as
+     * they came, and so does a relative address (`/reset?token=...`), which
+     * is not reached at all. A fragment is never read as path, but its
+     * `name=value` pairs are, since that is where a hash router writes its
+     * query (`#/reset?token=abc`) and an OAuth redirect its token
+     * (`#access_token=...`).
      */
     public function scrubUrl(string $url): string
     {
@@ -134,7 +141,7 @@ class Scrubber
 
         [, $lead, $address, $text] = $parts;
 
-        return $lead.$this->scrubAddress($address).$text;
+        return $lead.$this->scrubAddress($address).$this->scrubPairs($text);
     }
 
     private function scrubAddress(string $address): string
@@ -150,7 +157,7 @@ class Scrubber
 
         if (str_contains($query, '#')) {
             [$query, $fragment] = explode('#', $query, 2);
-            $fragment = '#'.$fragment;
+            $fragment = $this->scrubPairs('#'.$fragment);
         }
 
         $pairs = array_map(function (string $pair): string {
@@ -168,8 +175,9 @@ class Scrubber
 
     /**
      * Mask the token-shaped segments of the path. The authority (scheme,
-     * host, port) ends at the first slash after `//` and the path at a `#`;
-     * neither end is ever read as a segment.
+     * userinfo, host, port) ends at the first slash after `//` or at a `#`,
+     * and the path at a `#`; neither the authority nor the fragment is ever
+     * read as a segment, and the fragment goes through scrubPairs().
      */
     private function scrubPath(string $base): string
     {
@@ -184,7 +192,24 @@ class Scrubber
             explode('/', $path),
         );
 
-        return $authority.implode('/', $segments).$fragment;
+        return $authority.implode('/', $segments).$this->scrubPairs($fragment);
+    }
+
+    /**
+     * Mask the `name=value` pairs of a text that is not a query string of
+     * its own: a fragment, or what follows the leading URL. A pair opens on
+     * `&`, `?` or `#`, and its value runs to the next `&`, whitespace or the
+     * end, so the sentence around it is handed back as it came.
+     */
+    private function scrubPairs(string $text): string
+    {
+        return preg_replace_callback(
+            '/([&?#])([^&=\s?#]+)=([^&\s]*)/',
+            fn (array $pair): string => $this->matches(strtolower(rawurldecode($pair[2])))
+                ? $pair[1].$pair[2].'='.rawurlencode(self::MASK)
+                : $pair[0],
+            $text,
+        ) ?? $text;
     }
 
     /**
