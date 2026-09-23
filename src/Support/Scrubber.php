@@ -18,9 +18,10 @@ namespace QuietGuard\Monitor\Support;
  * Two kinds of string value hold secrets of their own, and the scrubber opens
  * both: a JSON object or array written as a string (Livewire's snapshot) is
  * decoded and masked by key like any array, and a string that starts with an
- * absolute http(s) URL has its query string masked by name, its token-shaped
- * path segments masked outright and the password of its userinfo masked (see
- * scrubUrl()); a string that starts with an address of any other scheme, a
+ * absolute http(s) URL has its query string masked by name (the key list,
+ * and the credential names of URL_CREDENTIALS whatever the list holds), its
+ * token-shaped path segments masked outright and the password of its userinfo
+ * masked (see scrubUrl()); a string that starts with an address of any other scheme, a
  * DSN, has the password of its userinfo masked and nothing else.
  */
 class Scrubber
@@ -32,6 +33,28 @@ class Scrubber
      * often than an identifier.
      */
     private const PATH_TOKEN = '/^[A-Za-z0-9]{40,}$/';
+
+    /**
+     * The names of an address's query or fragment parameters that ARE a
+     * credential wherever they appear, masked whatever the configured list
+     * holds: a link carrying one works for whoever has the address, until it
+     * expires.
+     *
+     * - `hash`: Symfony's login links (`?user=...&expires=...&hash=...`).
+     * - `_hash`: Symfony's UriSigner, which signs a URL with it beside
+     *   `_expiration` (fragments, signed routes).
+     * - `sig`: Azure's shared access signatures (SAS).
+     * - `signature`: Laravel's signed routes, and many others.
+     *
+     * Exact names, compared case-insensitively on the decoded name, and in an
+     * address only: in the key lists `hash` would mask every key containing
+     * it (`content_hash`, `hashtag`) and every source line calling
+     * `hash('sha256', ...)`. Keys of arrays, JSON strings and snippet lines
+     * never read this list.
+     *
+     * @var array<int, string>
+     */
+    public const URL_CREDENTIALS = ['hash', '_hash', 'sig', 'signature'];
 
     /**
      * The configured needles as names (see name()): what a key and a
@@ -283,8 +306,8 @@ class Scrubber
 
     /**
      * Mask what an absolute http(s) URL at the start of a string carries: the
-     * values of its query string whose name matches the key list, and every
-     * path segment shaped like a token.
+     * values of its query string whose name matches the key list or is one of
+     * URL_CREDENTIALS, and every path segment shaped like a token.
      *
      * The path segment is the case the query rule cannot see: Laravel's own
      * reset link (Breeze, Fortify, Jetstream) puts its token in the PATH,
@@ -350,7 +373,7 @@ class Scrubber
         $pairs = array_map(function (string $pair): string {
             [$name, $value] = array_pad(explode('=', $pair, 2), 2, null);
 
-            if ($value === null || ! $this->matches(strtolower(rawurldecode($name)))) {
+            if ($value === null || ! $this->matchesParameter($name)) {
                 return $pair;
             }
 
@@ -443,7 +466,7 @@ class Scrubber
     {
         return preg_replace_callback(
             '/([&?#])([^&=\s?#]+)=([^&\s]*)/',
-            fn (array $pair): string => $this->matches(strtolower(rawurldecode($pair[2])))
+            fn (array $pair): string => $this->matchesParameter($pair[2])
                 ? $pair[1].$pair[2].'='.rawurlencode(self::MASK)
                 : $pair[0],
             $text,
@@ -534,6 +557,18 @@ class Scrubber
         }
 
         return $frames;
+    }
+
+    /**
+     * Whether a parameter of an address, named as it is written there
+     * (encoded), is masked: a name of URL_CREDENTIALS exactly, or a name the
+     * key list matches.
+     */
+    private function matchesParameter(string $name): bool
+    {
+        $name = strtolower(rawurldecode($name));
+
+        return in_array($name, self::URL_CREDENTIALS, true) || $this->matches($name);
     }
 
     private function matches(string $key): bool

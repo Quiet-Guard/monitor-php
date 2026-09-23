@@ -53,6 +53,15 @@ All notable changes to `quiet-guard/monitor-php`.
   web's.
   The text after the URL is handed back as it came, except a pair opened by
   `&`, `?` or `#` whose name matches.
+- Four parameter names of an address are masked whatever the list holds,
+  since a link carrying one is a working credential until it expires: `hash`
+  (Symfony's login links, beside `user` and `expires`), `_hash` (Symfony's
+  `UriSigner`, beside `_expiration`), `sig` (Azure's shared access
+  signatures) and `signature` (`Scrubber::URL_CREDENTIALS`). The name is
+  matched exactly, decoded and regardless of case, so `hashtag` and
+  `content_hash` stay, and only in the query, the fragment and the pairs after
+  the URL: in the key lists `hash` would mask every key containing it and
+  every snippet line calling `hash('sha256', ...)`.
 - A source line that gives a value to an array index named in quotes is masked
   whole. A secret hardcoded into an array (`$config['password'] = '...'`,
   `$headers['Authorization'] = 'Bearer ...'`) travelled in clear in a snippet,
