@@ -2,7 +2,7 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
-## v0.4.0 (unreleased)
+## v0.4.0
 
 No change in the core: released alongside the Laravel SDK, whose automatic
 heartbeats need no new core API.
