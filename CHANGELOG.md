@@ -2,6 +2,11 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
+## v0.5.0
+
+No change in the core: released alongside the Laravel SDK, whose
+`monitor:backup --exclude-table` needs no new core API.
+
 ## v0.4.0
 
 No change in the core: released alongside the Laravel SDK, whose automatic
