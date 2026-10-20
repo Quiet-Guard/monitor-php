@@ -247,7 +247,8 @@ class ValueRedactor
      * Every shape but the key block sits on one line, so a piece ends on the
      * last line break of the window; a window with no line break ends on its
      * last space, and one with no space on its last byte outside the alphabet
-     * every token is written in. A window with none of those is one run of
+     * every token is written in, the backslash of an escaped slash (`\/`, as
+     * json_encode writes it) included. A window with none of those is one run of
      * token characters, a blob, and is cut where it is: the half of a token
      * on either side of that cut is not a token any more.
      *
@@ -269,7 +270,7 @@ class ValueRedactor
                     $cut = strrpos($window, ' ');
                 }
 
-                if ($cut === false && preg_match('~[^A-Za-z0-9_+/=.:@%\-](?=[A-Za-z0-9_+/=.:@%\-]*+$)~D', $window, $m, PREG_OFFSET_CAPTURE) === 1) {
+                if ($cut === false && preg_match('~[^A-Za-z0-9_+/=.:@%\\\-](?=[A-Za-z0-9_+/=.:@%\\\-]*+$)~D', $window, $m, PREG_OFFSET_CAPTURE) === 1) {
                     $cut = $m[0][1];
                 }
 
