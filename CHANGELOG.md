@@ -59,9 +59,12 @@ All notable changes to `quiet-guard/monitor-php`.
 - A percent-encoded value is read decoded (`ValueRedactor`): `fullUrl()` and
   `getUri()` write the query string encoded, so an email (`%40`), a number,
   an IBAN or a card written with spaces (`%20`), a DSN or an application key
-  passed as a parameter left in clear in the reported URL. Only the part that
-  changed is rewritten, the mask unencoded (`?email=[redacted:email]`), the
-  rest byte for byte.
+  passed as a parameter left in clear in the reported URL. Credentials are
+  read as written, then the decoded text (up to three levels, for an address
+  passed as a parameter and encoded again), then the personal shapes; only
+  the value is rewritten, the mask unencoded (`?email=[redacted:email]`),
+  every other byte as it was written. The password of an address no longer
+  runs across a `&name=` pair to the `@` of an email further on.
 - `Scrubber::scrubLines()` masks whole a line that hands a string literal to a
   call whose arguments are credentials (`Scrubber::CREDENTIAL_CALLS`: `new
   PDO`, `new mysqli`, `mysqli_connect`, `mysqli_real_connect`,
