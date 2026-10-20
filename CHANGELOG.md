@@ -2,6 +2,51 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
+## v0.6.0 (unreleased)
+
+### Security
+
+- `ValueRedactor` masks credentials by their shape, wherever they sit (an
+  exception message, a context field of any name, a code snippet line, a log),
+  on by default: Stripe keys (`sk_live_`, `sk_test_`, `rk_live_`, `rk_test_`,
+  `whsec_`), AWS access key ids (`AKIA`, `ASIA`), GitHub tokens (`ghp_`,
+  `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), GitLab tokens (`glpat-`),
+  Slack tokens (`xox?-`), JWTs (header decoded and parsed), private key blocks
+  (`-----BEGIN ... PRIVATE KEY-----`, PGP included, to the end of the text
+  when the block was cut), a Laravel `APP_KEY` (`base64:`) and a Quiet Guard
+  project key (`lm_`). The new shapes form `ValueRedactor::CREDENTIALS`, run
+  before the personal ones (a GitHub token starting with digits came out as
+  `[redacted:phone]`) and keep the precision rule: a class name, a git hash,
+  a UUID or a word carrying a prefix without the token behind it travels.
+- The password of a `user:password@host` written into an address of any
+  scheme is masked wherever the address sits in a text (`url_password`,
+  `[redacted:password]`), the scheme, the user and the host staying readable.
+  The `Scrubber` only read an address that opens a string, and an exception
+  message never went through it; the email shape then ate the password and
+  the host together.
+- A masking failure withholds the field instead of sending it as it came: a
+  PCRE failure on a built-in pattern, or on a custom one that compiled, replaces
+  the field whole by `ValueRedactor::UNSCANNABLE` (`[redacted:unscannable]`).
+  A string over 64 KB, formerly skipped whole, is read in pieces cut on a line
+  break (failing that a space, failing that a byte outside the token
+  alphabet), the key block being read on the whole text first. A custom
+  pattern that does not compile is dropped at construction, as before: a
+  configuration error, not an unreadable value.
+- `Scrubber::scrubLines()` masks whole a line that hands a string literal to a
+  call whose arguments are credentials (`Scrubber::CREDENTIAL_CALLS`: `new
+  PDO`, `new mysqli`, `mysqli_connect`, `mysqli_real_connect`,
+  `mysql_connect`, `pg_connect`, `pg_pconnect`, `oci_connect`, `ldap_bind`,
+  `ftp_login`, `imap_open`, `ssh2_auth_password`). A call passing variables,
+  or a literal nested in another call (`env('DB_PASSWORD')`), stays readable.
+
+### Added
+
+- `Scrubber::masks(string $key): bool`, the key rule made public, for an
+  adapter to ask it about a name of its own (the Laravel SDK asks about route
+  parameters).
+- `ValueRedactor::CREDENTIALS`, `ValueRedactor::PERSONAL`,
+  `ValueRedactor::UNSCANNABLE` and `ValueRedactor::CHUNK_BYTES`.
+
 ## v0.5.0
 
 No change in the core: released alongside the Laravel SDK, whose
