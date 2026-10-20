@@ -36,7 +36,10 @@ class ExceptionPayloadBuilder
         return [
             'exception' => [
                 'class' => Cut::to($e::class, self::LIMITS['class']),
-                'message' => Cut::to($e->getMessage(), self::LIMITS['message']),
+                // Soft, at a whitespace past the limit: the hard cut comes
+                // after masking (Cut::payload), so a token straddling the
+                // limit is masked whole rather than halved in clear.
+                'message' => Cut::soft($e->getMessage(), self::LIMITS['message']),
                 'file' => Cut::to($e->getFile(), self::LIMITS['file']),
                 'line' => $e->getLine(),
                 'trace' => $this->trace($e),

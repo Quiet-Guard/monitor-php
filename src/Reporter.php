@@ -50,8 +50,10 @@ class Reporter
         // Bornée APRÈS le masquage : masquer REMPLACE une valeur par une
         // étiquette plus longue, donc une charge coupée avant pouvait repasser
         // au-dessus de la limite du serveur et se faire refuser en silence,
-        // exactement ce que la troncature existe pour empêcher.
-        return $this->post('/api/v1/ingest', Cut::payload($this->redactor->redactAll($payload)), 'exception');
+        // exactement ce que la troncature existe pour empêcher. Et bornée
+        // AVANT, mollement (Cut::before) : une coupe dure avant le masquage
+        // laissait partir la moitié d'un jeton à cheval sur la limite.
+        return $this->post('/api/v1/ingest', Cut::payload($this->redactor->redactAll(Cut::before($payload))), 'exception');
     }
 
     /**
@@ -63,9 +65,9 @@ class Reporter
             return true;
         }
 
-        return $this->post('/api/v1/logs', Cut::payload($this->redactor->redactAll(
+        return $this->post('/api/v1/logs', Cut::payload($this->redactor->redactAll(Cut::before(
             ['logs' => $this->scrubber->scrub($logs)],
-        )), 'logs');
+        ))), 'logs');
     }
 
     /**

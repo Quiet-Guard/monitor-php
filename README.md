@@ -101,9 +101,10 @@ or another call whose arguments are credentials (`Scrubber::CREDENTIAL_CALLS`).
 `Support\ValueRedactor` masks by the shape of the value, wherever it sits, as
 the last thing before the wire: personal data (`email`, `iban`, `nir`, `card`,
 `phone`) and, from version 0.6.0, credentials recognised by their prefix
-(`ValueRedactor::CREDENTIALS`: Stripe, AWS, GitHub, GitLab and Slack keys, JWTs,
-private key blocks, a Laravel `APP_KEY`, a Quiet Guard project key, the password
-of a `user:password@host` in an address of any scheme). A field the engine could
+(`ValueRedactor::CREDENTIALS`: Stripe keys, an AWS access key id and its secret
+key when it follows one, GitHub, GitLab and Slack tokens, JWTs, private key
+blocks, a Laravel `APP_KEY`, a Quiet Guard project key, the password of a
+`user:password@host` in an address of any scheme). A field the engine could
 not read is withheld as `[redacted:unscannable]` rather than sent as it came,
 and a string over 64 KB is read in pieces rather than skipped.
 

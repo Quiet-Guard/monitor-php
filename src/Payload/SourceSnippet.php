@@ -68,7 +68,10 @@ final class SourceSnippet
                     break;
                 }
 
-                $lines[] = Cut::to(rtrim($raw, "\r\n"), self::MAX_LINE_LENGTH) ?? '';
+                // Soft, at a whitespace past the limit: the hard cut comes
+                // after masking (Cut::payload), so a token straddling the
+                // limit is masked whole rather than halved in clear.
+                $lines[] = Cut::soft(rtrim($raw, "\r\n"), self::MAX_LINE_LENGTH) ?? '';
             }
 
             fclose($handle);

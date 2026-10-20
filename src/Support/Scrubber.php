@@ -489,7 +489,9 @@ class Scrubber
      * its own arguments goes whole; `new PDO($dsn, $user, $password)` names
      * nothing and stays, by the same rule as everywhere else (a secret is
      * named AND given a value). `new` forms are matched on `new <name>(`, the
-     * functions on their bare name, with or without a leading backslash.
+     * functions on their bare name, with or without a leading backslash, the
+     * static factories on `<class>::connect(` (PDO's own since PHP 8.4, and
+     * its driver subclasses) and the method on `->real_connect(`.
      *
      * @var array<int, string>
      */
@@ -497,18 +499,32 @@ class Scrubber
         'PDO', 'mysqli',
         'mysqli_connect', 'mysqli_real_connect', 'mysql_connect', 'pg_connect', 'pg_pconnect', 'oci_connect',
         'ldap_bind', 'ftp_login', 'imap_open', 'ssh2_auth_password',
+        'PDO::connect', 'Pdo\\Mysql::connect', 'Pdo\\Pgsql::connect', 'Pdo\\Sqlite::connect',
+        'Pdo\\Odbc::connect', 'Pdo\\Dblib::connect', 'Pdo\\Firebird::connect',
+        '->real_connect',
     ];
 
     /**
      * Whether a key of that name is masked: the rule scrub() applies to an
      * array key (substring, case-insensitive, a hyphen reading as an
      * underscore, a configured name also found without its separators), made
-     * public so an adapter can ask it about a name of its own, a route
-     * parameter above all.
+     * public so an adapter can ask it about a name of its own.
      */
     public function masks(string $key): bool
     {
         return $this->matches(strtolower($key));
+    }
+
+    /**
+     * Whether a parameter of that name is masked where it names a value of
+     * an address: the key rule, plus the names of URL_CREDENTIALS exactly.
+     * For a route parameter, which is a segment of the address the router
+     * named: Laravel's own email verification route is
+     * `/email/verify/{id}/{hash}`, and that hash is the whole link.
+     */
+    public function masksParameter(string $name): bool
+    {
+        return $this->matchesParameter($name);
     }
 
     /**
@@ -586,9 +602,28 @@ class Scrubber
      */
     private function handsACredentialToACall(string $line): bool
     {
-        $names = implode('|', array_map(fn (string $name): string => preg_quote($name, '/'), self::CREDENTIAL_CALLS));
+        $functions = [];
+        $statics = [];
+        $methods = [];
 
-        if (preg_match_all('/(?:\bnew\s+\\\\?|(?<![\w\\\\>:$]))\\\\?(?:'.$names.')\s*\(/i', $line, $calls, PREG_OFFSET_CAPTURE) === 0) {
+        foreach (self::CREDENTIAL_CALLS as $call) {
+            if (str_starts_with($call, '->')) {
+                $methods[] = preg_quote(substr($call, 2), '/');
+            } elseif (str_contains($call, '::')) {
+                $statics[] = preg_quote($call, '/');
+            } else {
+                $functions[] = preg_quote($call, '/');
+            }
+        }
+
+        // A bare name, a `new`, a static factory or a method call, each read
+        // where its own syntax puts it; the class of a static call may carry
+        // its leading backslash.
+        $pattern = '/(?:(?:\bnew\s+\\\\?|(?<![\w\\\\>:$]))\\\\?(?:'.implode('|', $functions).')'
+            .'|(?<![\w\\\\])\\\\?(?:'.implode('|', $statics).')'
+            .'|->(?:'.implode('|', $methods).'))\s*\(/i';
+
+        if (preg_match_all($pattern, $line, $calls, PREG_OFFSET_CAPTURE) === 0) {
             return false;
         }
 

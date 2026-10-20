@@ -42,7 +42,19 @@ class ValueRedactor
      * runs otherwise bite into a token (`ghp_0612345678...` came out as
      * `[redacted:phone]`).
      */
-    public const CREDENTIALS = ['private_key', 'jwt', 'stripe', 'aws', 'github', 'gitlab', 'slack', 'app_key', 'project_key', 'url_password'];
+    public const CREDENTIALS = ['private_key', 'jwt', 'stripe', 'aws', 'aws_secret', 'github', 'gitlab', 'slack', 'app_key', 'project_key', 'url_password'];
+
+    /**
+     * The list every client shipped as its default before 0.6.0, and wrote
+     * into the configuration it told its readers to publish. A copy of that
+     * file names these five, in this order, and nothing else; read literally
+     * it would switch every credential shape off for everyone who followed
+     * the installation page, which is the "default in a template is a copy"
+     * lesson once more. So this exact list is read as "the default", which
+     * it was when it was written, and a client that wants exactly these five
+     * writes them in another order or adds one.
+     */
+    public const LEGACY_DEFAULT = ['email', 'iban', 'nir', 'card', 'phone'];
 
     /**
      * The shapes that are personal data, in the order they are applied.
@@ -97,6 +109,10 @@ class ValueRedactor
      */
     public function __construct(array $enabled = self::PATTERNS, array $custom = [])
     {
+        if (array_values($enabled) === self::LEGACY_DEFAULT) {
+            $enabled = self::PATTERNS;
+        }
+
         $this->enabled = array_values(array_intersect(self::PATTERNS, $enabled));
 
         foreach ($custom as $label => $pattern) {
@@ -168,7 +184,16 @@ class ValueRedactor
         $out = [];
 
         foreach ($data as $key => $value) {
-            $key = is_string($key) ? $this->redact($key) : $key;
+            if (is_string($key)) {
+                $masked = $this->redact($key);
+
+                // Two keys masked to the same label would land on one slot
+                // and the second would silently replace the first; each
+                // keeps a row of its own.
+                for ($n = 2, $key = $masked; array_key_exists($key, $out); $n++) {
+                    $key = $masked.' ('.$n.')';
+                }
+            }
 
             $out[$key] = match (true) {
                 is_string($value) => $this->redact($value),
@@ -251,6 +276,14 @@ class ValueRedactor
                 if ($cut !== false && $cut > 0) {
                     $size = $cut + 1;
                 }
+
+                // Never between the bytes of one character: a piece that
+                // ends inside a multi-byte sequence is not UTF-8 any more,
+                // and a custom pattern written with `/u` then fails on it.
+                // The byte after the cut must not be a continuation byte.
+                while ($size > 1 && $offset + $size < $length && (ord($text[$offset + $size]) & 0xC0) === 0x80) {
+                    $size--;
+                }
             }
 
             yield substr($text, $offset, $size);
@@ -281,8 +314,11 @@ class ValueRedactor
             // From the BEGIN line to the END line, PGP's "PRIVATE KEY BLOCK"
             // included; a block whose END is missing (the message was cut
             // before it) is masked to the end of the text, since the key is
-            // what was cut, not the marker.
-            'private_key' => '~-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|[\s\S]*)~',
+            // what was cut, not the marker. Possessive runs rather than a
+            // lazy `[\s\S]*?`: the lazy form counted one backtrack per byte
+            // and gave up on a block of a megabyte, which then came out as
+            // unscannable where it should have come out masked.
+            'private_key' => '~-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:[^-]++|-(?!----END ))*+(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----)?~',
 
             // Three base64url parts, the first two opening on `{"` (`eyJ`);
             // the signature may be empty (alg: none). Confirmed by decoding
@@ -297,18 +333,36 @@ class ValueRedactor
             // sixteen upper-case letters or digits, exactly.
             'aws' => '~(?<![A-Za-z0-9/+])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9])~',
 
+            // The secret access key is forty base64 characters with no
+            // prefix at all: alone, that is the shape of any hash or token,
+            // and masking every one of them is the pattern somebody switches
+            // off. It is masked only where it is known for what it is: within
+            // eighty characters after an access key id (just masked by the
+            // pattern above, hence the label it looks for), or after the
+            // name `aws_secret_access_key` / `aws_secret_key`. The anchor is
+            // kept, the forty characters go.
+            'aws_secret' => '~((?:\[redacted:aws\]|aws_secret(?:_access)?_key)[^\n]{0,80}?)(?<![A-Za-z0-9/+])([A-Za-z0-9/+]{40})(?![A-Za-z0-9/+=])~i',
+
             // Classic and fine-grained personal access tokens, OAuth, user,
             // server and refresh tokens.
             'github' => '~(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})~',
 
-            'gitlab' => '~(?<![A-Za-z0-9_])glpat-[A-Za-z0-9_\-]{20,}~',
+            // Personal, runner, deploy, pipeline trigger, feature flag,
+            // incoming mail, agent and CI job tokens, and OAuth application
+            // secrets: every prefix GitLab documents for a token it issues.
+            'gitlab' => '~(?<![A-Za-z0-9_])gl(?:pat|rt|dt|oas|ptt|ffct|imt|agent|cbt|soat)-[A-Za-z0-9_\-]{20,}~',
 
-            'slack' => '~(?<![A-Za-z0-9_])xox[abeprs]-[A-Za-z0-9\-]{10,}~',
+            // Bot, user, app-level, refresh and legacy tokens, and the
+            // address of an incoming webhook, whose path IS the secret: the
+            // host and `/services/` stay, the three segments go.
+            'slack' => '~(https:(?:\\\\?/){2}hooks\.slack\.com(?:\\\\?/)services(?:\\\\?/))[A-Za-z0-9]+(?:\\\\?/)[A-Za-z0-9]+(?:\\\\?/)[A-Za-z0-9]+|(?<![A-Za-z0-9_])(?:xox[abeprs]|xapp)-[A-Za-z0-9\-]{10,}~',
 
             // The form `php artisan key:generate` writes: `base64:` then
             // thirty-two bytes, forty-four characters ending on one `=`. An
-            // `=` may precede it: that is how a .env line writes it.
-            'app_key' => '~(?<![A-Za-z0-9+/])base64:[A-Za-z0-9+/]{43}=(?![A-Za-z0-9+/=])~',
+            // `=` may precede it: that is how a .env line writes it. A slash
+            // may arrive escaped (`\/`): that is how json_encode() writes it,
+            // and a Livewire snapshot or a dumped array is a JSON string.
+            'app_key' => '~(?<![A-Za-z0-9+/])base64:(?:[A-Za-z0-9+]|\\\\?/){43}=(?![A-Za-z0-9+/=])~',
 
             // Our own: `lm_` and the forty characters ProjectToken::generate
             // draws (see the server's App\Models\ProjectToken).
@@ -317,10 +371,22 @@ class ValueRedactor
             // `scheme://user:password@`, anywhere in the text and for any
             // scheme (a DSN above all): the password goes, the scheme, the
             // user and what follows the `@` stay, so the sentence still says
-            // which host and whose account. The user may already be a mask
-            // (a token written there was labelled a step earlier), whose own
-            // colon must not be read as the separator.
-            'url_password' => '~(?<![A-Za-z0-9+.\-])([a-z][a-z0-9+.\-]*://(?:\[redacted:[a-z_]+\]|[^\s/:@]*):)([^\s/@]+)@~i',
+            // which host and whose account.
+            //
+            // Four shapes a first version missed, each measured: the slashes
+            // of the separator may be escaped (`redis:\/\/`, json_encode);
+            // the user may carry an `@` (a mailer DSN's `postmaster@domain`),
+            // so it is read up to the first `:`; the password may carry an
+            // `@` (`p@ssw0rd`), so it runs to the LAST `@` the authority
+            // holds; and it may carry a `/` (a base64 one), which is admitted
+            // only when what precedes the first `/` is not a bare port
+            // number, or `https://host:8080/users/a@b.fr` would read the
+            // port as a user. Every candidate `@` has to be followed by a
+            // host and then a delimiter, which is what tells the last `@` of
+            // the authority from one in a path or a query. The user may
+            // already be a mask (a token written there was labelled a step
+            // earlier), whose own colon must not be read as the separator.
+            'url_password' => '~(?<![A-Za-z0-9+.\-])([a-z][a-z0-9+.\-]*:(?:\\\\?/){2}(?:\[redacted:[a-z_]+\]|[^\s/:"\'\\\\]*):)((?:(?!\d+/)[^\s"\'?\\\\]+|[^\s"\'?/\\\\]+))@(?=[A-Za-z0-9._\-\[\]]+(?::\d+)?(?:[\s/?#"\']|\\\\/|$))~i',
 
             // Deliberately not RFC 5322. That grammar matches things nobody
             // types and is a backtracking hazard in a hot path.
@@ -361,6 +427,13 @@ class ValueRedactor
             return str_starts_with($m[2], '[redacted:')
                 ? $m[0]
                 : $m[1].$this->mask('password').'@';
+        }
+
+        // The shapes that keep an anchor and mask what follows it: the
+        // webhook host before a Slack path, the key id or the name before
+        // an AWS secret.
+        if (in_array($name, ['slack', 'aws_secret'], true) && isset($m[1]) && $m[1] !== '') {
+            return $m[1].$this->mask($name);
         }
 
         return $this->confirms($name, $m[0]) ? $this->mask($name) : $m[0];

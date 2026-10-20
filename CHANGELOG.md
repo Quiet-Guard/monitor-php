@@ -9,9 +9,13 @@ All notable changes to `quiet-guard/monitor-php`.
 - `ValueRedactor` masks credentials by their shape, wherever they sit (an
   exception message, a context field of any name, a code snippet line, a log),
   on by default: Stripe keys (`sk_live_`, `sk_test_`, `rk_live_`, `rk_test_`,
-  `whsec_`), AWS access key ids (`AKIA`, `ASIA`), GitHub tokens (`ghp_`,
-  `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), GitLab tokens (`glpat-`),
-  Slack tokens (`xox?-`), JWTs (header decoded and parsed), private key blocks
+  `whsec_`), AWS access key ids (`AKIA`, `ASIA`) and the secret key only
+  where it is known for what it is (within eighty characters after an id, or
+  under `aws_secret_access_key`), GitHub tokens (`ghp_`, `gho_`, `ghu_`,
+  `ghs_`, `ghr_`, `github_pat_`), GitLab tokens (`glpat-`, `glrt-`, `gldt-`,
+  `gloas-`, `glptt-`, `glffct-`, `glimt-`, `glagent-`, `glcbt-`, `glsoat-`),
+  Slack tokens (`xox?-`, `xapp-`) and the path of a `hooks.slack.com`
+  webhook, JWTs (header decoded and parsed), private key blocks
   (`-----BEGIN ... PRIVATE KEY-----`, PGP included, to the end of the text
   when the block was cut), a Laravel `APP_KEY` (`base64:`) and a Quiet Guard
   project key (`lm_`). The new shapes form `ValueRedactor::CREDENTIALS`, run
@@ -23,7 +27,24 @@ All notable changes to `quiet-guard/monitor-php`.
   `[redacted:password]`), the scheme, the user and the host staying readable.
   The `Scrubber` only read an address that opens a string, and an exception
   message never went through it; the email shape then ate the password and
-  the host together.
+  the host together. The slashes may arrive escaped (`redis:\/\/`, as
+  json_encode writes them, for an application key too), the user may carry an
+  `@` (a mailer DSN), the password an `@` or a `/`: it runs to the last `@`
+  of the authority.
+- A hard cut before masking halved a token straddling the limit, and its
+  first half, the prefix, left in clear. `Cut::soft()` cuts on the first
+  whitespace past the limit, `Cut::before()` applies it to the message and
+  the snippet lines before masking (the `Reporter` calls it), and the hard
+  cut of `Cut::payload()` lands on masked text. `Cut::before()` also replaces
+  a context whose JSON exceeds the 65 535 bytes the server keeps by the
+  server's own marker, `environment`, `release` and `occurred_at` kept, rather
+  than scanning megabytes the server drops.
+- The exact list every client shipped before this version,
+  `['email', 'iban', 'nir', 'card', 'phone']` in that order
+  (`ValueRedactor::LEGACY_DEFAULT`), is read as the default it was: every
+  published configuration carries it, and read literally it would have
+  switched every credential shape off for whoever followed the installation
+  page.
 - A masking failure withholds the field instead of sending it as it came: a
   PCRE failure on a built-in pattern, or on a custom one that compiled, replaces
   the field whole by `ValueRedactor::UNSCANNABLE` (`[redacted:unscannable]`).
@@ -31,21 +52,32 @@ All notable changes to `quiet-guard/monitor-php`.
   break (failing that a space, failing that a byte outside the token
   alphabet), the key block being read on the whole text first. A custom
   pattern that does not compile is dropped at construction, as before: a
-  configuration error, not an unreadable value.
+  configuration error, not an unreadable value. A piece never ends between
+  the bytes of one character, or a custom pattern written with `/u` failed on
+  it. The private key block is read without backtracking, so a block of a
+  megabyte comes out masked rather than unscannable.
 - `Scrubber::scrubLines()` masks whole a line that hands a string literal to a
   call whose arguments are credentials (`Scrubber::CREDENTIAL_CALLS`: `new
   PDO`, `new mysqli`, `mysqli_connect`, `mysqli_real_connect`,
   `mysql_connect`, `pg_connect`, `pg_pconnect`, `oci_connect`, `ldap_bind`,
-  `ftp_login`, `imap_open`, `ssh2_auth_password`). A call passing variables,
+  `ftp_login`, `imap_open`, `ssh2_auth_password`, PHP 8.4's `PDO::connect` and
+  `Pdo\Mysql::connect` / `Pdo\Pgsql::connect` / `Pdo\Sqlite::connect`
+  factories, and `->real_connect`). A call passing variables,
   or a literal nested in another call (`env('DB_PASSWORD')`), stays readable.
 
 ### Added
 
-- `Scrubber::masks(string $key): bool`, the key rule made public, for an
-  adapter to ask it about a name of its own (the Laravel SDK asks about route
-  parameters).
+- `Scrubber::masks(string $key): bool` and `Scrubber::masksParameter(string
+  $name): bool`, the key rule and the address-parameter rule made public, for
+  an adapter to ask about a name of its own (the Laravel SDK asks about route
+  parameters, `{hash}` of the email verification link included).
 - `ValueRedactor::CREDENTIALS`, `ValueRedactor::PERSONAL`,
-  `ValueRedactor::UNSCANNABLE` and `ValueRedactor::CHUNK_BYTES`.
+  `ValueRedactor::LEGACY_DEFAULT`, `ValueRedactor::UNSCANNABLE` and
+  `ValueRedactor::CHUNK_BYTES`; `Cut::soft()`, `Cut::before()`, `Cut::SLACK`,
+  `Cut::CONTEXT_MARKER` and `Cut::LIMITS['context']`.
+- `ValueRedactor::redactAll()` keeps two keys masked to the same label as two
+  rows (`[redacted:email]`, `[redacted:email] (2)`) rather than one replacing
+  the other.
 
 ## v0.5.0
 
