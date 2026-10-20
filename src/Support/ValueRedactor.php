@@ -103,13 +103,52 @@ class ValueRedactor
      */
     private const MAX_DECODINGS = 3;
 
+    /**
+     * What a `&` decoded from `%26` is written as in a decoded layer: a
+     * byte no pattern treats as a separator. Encoded, the `&` belongs to
+     * the value (a password, a query passed as a parameter); written, it
+     * separates two parameters, and url_password only ends an address on
+     * that one. Never written out: what leaves a decoded layer is the
+     * original spelling, or a mask.
+     */
+    private const ENCODED_AMPERSAND = "\x00";
+
+    /**
+     * A decoded layer is opened only when one of its escapes decodes to
+     * something other than a letter or a digit: an escape of `A` or `7`
+     * hides no separator, and frameworks never write one.
+     */
+    private const OPENING_ESCAPE = '/%(?![46][1-9A-Fa-f]|[57][0-9Aa]|3[0-9])[0-9A-Fa-f]{2}/';
+
+    /**
+     * The longest string redactAll() remembers the answer for: a context
+     * often repeats the same short value, and one that is long is not
+     * worth holding twice.
+     */
+    private const MEMO_BYTES = 1024;
+
     /** @var array<int, string> */
     private array $enabled;
 
     /**
+     * The enabled credential shapes, in the order they are applied.
+     *
+     * @var array<int, string>
+     */
+    private array $credentials;
+
+    /**
+     * The enabled personal shapes, in the order they are applied.
+     *
+     * @var array<int, string>
+     */
+    private array $personal;
+
+    /**
      * The custom patterns that compile. One that does not is a configuration
      * error and is dropped here, once, rather than failing the field at every
-     * report: the field is readable, the pattern is not.
+     * report: the field is readable, the pattern is not. So is one whose
+     * label holds a bracket or a line break: its mask would not read as one.
      *
      * @var array<string, string>
      */
@@ -126,9 +165,11 @@ class ValueRedactor
         }
 
         $this->enabled = array_values(array_intersect(self::PATTERNS, $enabled));
+        $this->credentials = array_values(array_intersect($this->enabled, self::CREDENTIALS));
+        $this->personal = array_values(array_intersect($this->enabled, self::PERSONAL));
 
         foreach ($custom as $label => $pattern) {
-            if (is_string($pattern) && @preg_match($pattern, '') !== false) {
+            if (is_string($pattern) && preg_match('/[\[\]\n]/', (string) $label) !== 1 && @preg_match($pattern, '') !== false) {
                 $this->custom[(string) $label] = $pattern;
             }
         }
@@ -149,28 +190,29 @@ class ValueRedactor
         }
 
         if (strlen($text) <= self::CHUNK_BYTES) {
-            return $this->redactChunk($text, $this->enabled);
+            return $this->redactChunk($text, $this->credentials);
         }
 
         // The key block is the one shape that spans lines, so it is the one
         // shape a chunk boundary could cut in two: it is read on the whole
         // text first, and the chunks are read without it.
-        $names = $this->enabled;
+        $credentials = $this->credentials;
 
-        if (in_array('private_key', $names, true)) {
-            $text = $this->apply($text, 'private_key');
+        if (in_array('private_key', $credentials, true)) {
+            $applied = $this->apply($text, 'private_key', 0, null);
 
-            if ($text === null) {
+            if ($applied === null) {
                 return self::UNSCANNABLE;
             }
 
-            $names = array_values(array_diff($names, ['private_key']));
+            $text = $applied[0];
+            $credentials = array_values(array_diff($credentials, ['private_key']));
         }
 
         $out = '';
 
         foreach ($this->chunks($text) as $chunk) {
-            $redacted = $this->redactChunk($chunk, $names);
+            $redacted = $this->redactChunk($chunk, $credentials);
 
             if ($redacted === self::UNSCANNABLE) {
                 return self::UNSCANNABLE;
@@ -187,17 +229,35 @@ class ValueRedactor
      *
      * Keys are redacted too: an array keyed by email address would otherwise
      * publish every address in its keys while its values were being cleaned.
+     * A short string met twice is read once.
      *
      * @param  array<mixed>  $data
      * @return array<mixed>
      */
     public function redactAll(array $data): array
     {
+        $memo = [];
+
+        return $this->redactStructure($data, $memo);
+    }
+
+    public function mask(string $label): string
+    {
+        return '[redacted:'.$label.']';
+    }
+
+    /**
+     * @param  array<mixed>  $data
+     * @param  array<string, string>  $memo
+     * @return array<mixed>
+     */
+    private function redactStructure(array $data, array &$memo): array
+    {
         $out = [];
 
         foreach ($data as $key => $value) {
             if (is_string($key)) {
-                $masked = $this->redact($key);
+                $masked = $this->remembered($key, $memo);
 
                 // Two keys masked to the same label would land on one slot
                 // and the second would silently replace the first; each
@@ -208,8 +268,8 @@ class ValueRedactor
             }
 
             $out[$key] = match (true) {
-                is_string($value) => $this->redact($value),
-                is_array($value) => $this->redactAll($value),
+                is_string($value) => $this->remembered($value, $memo),
+                is_array($value) => $this->redactStructure($value, $memo),
                 default => $value,
             };
         }
@@ -217,9 +277,16 @@ class ValueRedactor
         return $out;
     }
 
-    public function mask(string $label): string
+    /**
+     * @param  array<string, string>  $memo
+     */
+    private function remembered(string $text, array &$memo): string
     {
-        return '[redacted:'.$label.']';
+        if (strlen($text) > self::MEMO_BYTES) {
+            return $this->redact($text);
+        }
+
+        return $memo[$text] ??= $this->redact($text);
     }
 
     /**
@@ -237,39 +304,135 @@ class ValueRedactor
      * fails its own lookbehind as written, and `phone` then bit `0612345678`
      * out of it.
      *
-     * @param  array<int, string>  $names
+     * @param  array<int, string>  $credentials
      */
-    private function redactChunk(string $text, array $names): string
+    private function redactChunk(string $text, array $credentials): string
     {
-        return $this->redactLayer($text, $names, 0) ?? self::UNSCANNABLE;
+        return $this->redactLayer($text, $credentials, 0, null)[0] ?? self::UNSCANNABLE;
     }
 
     /**
      * The three passes of redactChunk() at one level of decoding; null when
      * the engine failed.
      *
-     * @param  array<int, string>  $names
+     * Below the first level every change is recorded: the result comes back
+     * with, for each of its bytes, the position in `$text` it came from, or
+     * -1 for a byte a mask put there (null when nothing changed). That is
+     * what lets redactDecoded() write back only the values, in the encoded
+     * text, every other byte as it was written.
+     *
+     * @param  array<int, string>  $credentials
+     * @return array{0: string, 1: array<int, int>|null}|null
      */
-    private function redactLayer(string $text, array $names, int $depth): ?string
+    private function redactLayer(string $text, array $credentials, int $depth, ?string $parent): ?array
     {
-        $text = $this->applyNames($text, array_values(array_intersect($names, self::CREDENTIALS)));
+        $track = $depth > 0;
+        $map = null;
 
-        if ($text !== null && $depth < self::MAX_DECODINGS && preg_match('/%[0-9A-Fa-f]{2}/', $text) === 1) {
-            $text = $this->redactDecoded($text, $depth);
+        foreach ($credentials as $name) {
+            $step = $this->apply($text, $name, $depth, $parent);
+
+            if ($step === null) {
+                return null;
+            }
+
+            [$text, $map] = $this->advance($text, $map, $step, $track);
         }
 
-        if ($text !== null) {
-            $text = $this->applyNames($text, array_values(array_diff($names, self::CREDENTIALS)));
+        $opens = $depth < self::MAX_DECODINGS ? preg_match(self::OPENING_ESCAPE, $text) : 0;
+
+        if ($opens === false) {
+            return null;
         }
 
-        // A decoded layer may hold bytes that are not UTF-8 (`caf%E9`, a
-        // Latin-1 address): a custom pattern written with `/u` cannot read
-        // them, and the layer as written, which it read, is enough.
-        return $text === null ? null : $this->applyCustom($text, $depth > 0 && preg_match('//u', $text) !== 1);
+        if ($opens === 1) {
+            $step = $this->redactDecoded($text, $depth);
+
+            if ($step === null) {
+                return null;
+            }
+
+            [$text, $map] = $this->advance($text, $map, $step, $track);
+        }
+
+        foreach ($this->personal as $name) {
+            $step = $this->apply($text, $name, $depth, $parent);
+
+            if ($step === null) {
+                return null;
+            }
+
+            [$text, $map] = $this->advance($text, $map, $step, $track);
+        }
+
+        foreach ($this->custom as $label => $pattern) {
+            $step = $this->applyCustom($text, $label, $pattern, $depth);
+
+            if ($step === null) {
+                return null;
+            }
+
+            [$text, $map] = $this->advance($text, $map, $step, $track);
+        }
+
+        // The AWS secret is found within eighty characters after its key
+        // id, a distance the masks put since have shortened: read again on
+        // the final text, or a second pass found what the first had missed.
+        if (in_array('aws_secret', $credentials, true)) {
+            $step = $this->apply($text, 'aws_secret', $depth, $parent);
+
+            if ($step === null) {
+                return null;
+            }
+
+            [$text, $map] = $this->advance($text, $map, $step, $track);
+        }
+
+        return [$text, $map];
     }
 
     /**
-     * The shapes of a text read decoded where it is percent-encoded.
+     * The text after one pass, and the origin of each of its bytes when it
+     * is tracked.
+     *
+     * @param  array<int, int>|null  $map
+     * @param  array{0: string, 1: array<int, array{0: int, 1: int, 2: string}>}  $step
+     * @return array{0: string, 1: array<int, int>|null}
+     */
+    private function advance(string $text, ?array $map, array $step, bool $track): array
+    {
+        [$next, $edits] = $step;
+
+        if (! $track || $edits === []) {
+            return [$next, $map];
+        }
+
+        $map ??= $text === '' ? [] : range(0, strlen($text) - 1);
+        $out = [];
+        $cursor = 0;
+
+        foreach ($edits as [$start, $end, $replacement]) {
+            for ($i = $cursor; $i < $start; $i++) {
+                $out[] = $map[$i];
+            }
+
+            for ($i = 0, $length = strlen($replacement); $i < $length; $i++) {
+                $out[] = -1;
+            }
+
+            $cursor = $end;
+        }
+
+        for ($i = $cursor, $length = count($map); $i < $length; $i++) {
+            $out[] = $map[$i];
+        }
+
+        return [$next, $out];
+    }
+
+    /**
+     * The shapes of a text read decoded where it is percent-encoded, and
+     * where in the text what changed sits.
      *
      * An address is written encoded: `fullUrl()` in Laravel and `getUri()` in
      * Symfony both rewrite the query string in RFC 3986 form, so the email a
@@ -281,25 +444,23 @@ class ValueRedactor
      * `query` array beside it.
      *
      * Every `%XX` of the text is decoded at once (a `+` stays a `+`: a form
-     * body quoted with `+` for its spaces is not read as spaced), and each
-     * decoded byte remembers where it was written. The decoded text goes
-     * through redactLayer() one level down, every enabled pattern included
-     * (the key block too, which a long text read in chunks has had removed
-     * from its list), so an address passed as a parameter and encoded again
-     * (`next=...%3Femail%3Djeanne%2540example.fr`, `%2540` being `@` encoded
-     * twice) is opened in turn, up to MAX_DECODINGS levels.
+     * body quoted with `+` for its spaces is not read as spaced; a `%26` is
+     * written ENCODED_AMPERSAND), and each decoded byte remembers where it
+     * was written. The decoded text goes through redactLayer() one level
+     * down, every enabled pattern included (the key block too, which a long
+     * text read in chunks has had removed from its list), so an address
+     * passed as a parameter and encoded again
+     * (`next=...%3Femail%3Djeanne%2540example.fr`) is opened in turn, up to
+     * MAX_DECODINGS levels.
      *
-     * What comes back differs from the decoded text only by masks put in
-     * place of values (substitutions()), so only those values are rewritten:
-     * every other byte keeps the spelling it was written with, and the mask
-     * is written unencoded, `[redacted:email]`, as the redactor writes it
-     * anywhere else. A mask holds no escape, so a second pass changes
-     * nothing. Should the two texts ever fail to line up that way, the part
-     * between the first and the last change is written again re-encoded with
-     * rawurlencode, masks kept unencoded: correct, if less faithful to the
-     * original spelling.
+     * Every pass below records where it put a mask, so only the values are
+     * written back: every other byte keeps the spelling it was written
+     * with, and the mask is written unencoded, `[redacted:email]`, as the
+     * redactor writes it anywhere else.
+     *
+     * @return array{0: string, 1: array<int, array{0: int, 1: int, 2: string}>}|null
      */
-    private function redactDecoded(string $text, int $depth): ?string
+    private function redactDecoded(string $text, int $depth): ?array
     {
         $parts = preg_split('/(%[0-9A-Fa-f]{2})/', $text, -1, PREG_SPLIT_DELIM_CAPTURE);
 
@@ -314,147 +475,112 @@ class ValueRedactor
         foreach ($parts as $index => $part) {
             if ($index % 2 === 1) {
                 $origin[] = $offset;
-                $decoded .= chr((int) hexdec(substr($part, 1)));
+                $byte = chr((int) hexdec(substr($part, 1)));
+                $decoded .= $byte === '&' ? self::ENCODED_AMPERSAND : $byte;
                 $offset += 3;
 
                 continue;
             }
 
-            $length = strlen($part);
-
-            if ($length > 0) {
-                array_push($origin, ...range($offset, $offset + $length - 1));
-                $decoded .= $part;
-                $offset += $length;
+            for ($i = 0, $length = strlen($part); $i < $length; $i++) {
+                $origin[] = $offset + $i;
             }
+
+            $decoded .= $part;
+            $offset += strlen($part);
         }
 
         $origin[] = $offset;
-        $redacted = $this->redactLayer($decoded, $this->enabled, $depth + 1);
+        $layer = $this->redactLayer($decoded, $this->credentials, $depth + 1, $text);
 
-        if ($redacted === null || $redacted === $decoded) {
-            return $redacted === null ? null : $text;
+        if ($layer === null) {
+            return null;
         }
 
-        $regions = $this->substitutions($decoded, $redacted);
+        [$out, $map] = $layer;
 
-        if ($regions === null) {
-            return $this->rewriteChange($text, $decoded, $redacted, $origin);
+        if ($map === null) {
+            return [$text, []];
         }
 
-        $out = '';
-        $cursor = 0;
+        // Back to the written text: a run of decoded bytes in order is
+        // written as it was, anything a mask put in place of a run is an
+        // edit of the text.
+        $edits = [];
+        $expected = 0;
+        $inserted = '';
 
-        foreach ($regions as [$start, $end, $mask]) {
-            $out .= substr($text, $origin[$cursor], $origin[$start] - $origin[$cursor]).$mask;
-            $cursor = $end;
-        }
+        for ($i = 0, $length = strlen($out); $i < $length; $i++) {
+            $from = $map[$i];
 
-        return $out.substr($text, $origin[$cursor]);
-    }
-
-    /**
-     * Where the masks of `$after` replaced a value of `$before`: a list of
-     * [start, end, masks] in `$before`, or null when the two do not line up
-     * as masks put in place of values.
-     *
-     * A mask `$before` already carried at the same place is left as it is.
-     * Masks written back to back form one region. A region ends where the
-     * text that follows its masks in `$after` is found again in `$before`;
-     * the result is rebuilt and compared before it is trusted.
-     *
-     * @return array<int, array{0: int, 1: int, 2: string}>|null
-     */
-    private function substitutions(string $before, string $after): ?array
-    {
-        preg_match_all(self::MASK_PATTERN, $after, $found, PREG_OFFSET_CAPTURE);
-
-        $masks = $found[0];
-        $count = count($masks);
-        $regions = [];
-        $i = 0;
-        $j = 0;
-
-        for ($x = 0; $x < $count;) {
-            [$mask, $at] = $masks[$x];
-
-            if (substr($after, $j, $at - $j) !== substr($before, $i, $at - $j)) {
-                return null;
-            }
-
-            $i += $at - $j;
-            $j = $at;
-
-            if (substr($before, $i, strlen($mask)) === $mask) {
-                $i += strlen($mask);
-                $j += strlen($mask);
-                $x++;
+            if ($from === -1) {
+                $inserted .= $out[$i];
 
                 continue;
             }
 
-            $written = '';
-
-            while ($x < $count && $masks[$x][1] === $j) {
-                $written .= $masks[$x][0];
-                $j += strlen($masks[$x][0]);
-                $x++;
+            if ($from !== $expected || $inserted !== '') {
+                $edits[] = [$origin[$expected], $origin[$from], str_replace(self::ENCODED_AMPERSAND, '%26', $inserted)];
+                $inserted = '';
             }
 
-            $next = $x < $count ? $masks[$x][1] : strlen($after);
-            $following = substr($after, $j, $next - $j);
-
-            if ($x === $count) {
-                $end = strlen($before) - strlen($following);
-            } else {
-                $end = $following === '' ? false : strpos($before, $following, $i + 1);
-            }
-
-            if ($end === false || $end <= $i) {
-                return null;
-            }
-
-            $regions[] = [$i, $end, $written];
-            $i = $end;
+            $expected = $from + 1;
         }
 
-        $rebuilt = '';
-        $cursor = 0;
-
-        foreach ($regions as [$start, $end, $written]) {
-            $rebuilt .= substr($before, $cursor, $start - $cursor).$written;
-            $cursor = $end;
+        if ($expected !== strlen($decoded) || $inserted !== '') {
+            $edits[] = [$origin[$expected], $origin[strlen($decoded)], str_replace(self::ENCODED_AMPERSAND, '%26', $inserted)];
         }
 
-        return $rebuilt.substr($before, $cursor) === $after ? $regions : null;
+        return [self::rewrite($text, $edits), $edits];
     }
 
     /**
-     * The fallback of redactDecoded(): the part between the first and the
-     * last change written again, re-encoded with rawurlencode, its masks
-     * unencoded and whole.
+     * A text with its edits applied, each [start, end, replacement] in the
+     * text's own positions, in order.
      *
-     * @param  array<int, int>  $origin
+     * @param  array<int, array{0: int, 1: int, 2: string}>  $edits
      */
-    private function rewriteChange(string $text, string $decoded, string $redacted, array $origin): string
+    private static function rewrite(string $text, array $edits): string
     {
-        $before = strlen($decoded);
-        $after = strlen($redacted);
+        $out = '';
+        $cursor = 0;
+
+        foreach ($edits as [$start, $end, $replacement]) {
+            $out .= substr($text, $cursor, $start - $cursor).$replacement;
+            $cursor = $end;
+        }
+
+        return $out.substr($text, $cursor);
+    }
+
+    /**
+     * Record that `$match`, found at `$at`, became `$replacement`: only the
+     * part between their common start and their common end, widened so that
+     * a mask is never split between what was kept and what was written.
+     *
+     * @param  array<int, array{0: int, 1: int, 2: string}>  $edits
+     */
+    private static function edit(array &$edits, int $at, string $match, string $replacement): void
+    {
+        if ($match === $replacement) {
+            return;
+        }
+
+        $matched = strlen($match);
+        $written = strlen($replacement);
         $prefix = 0;
 
-        while ($prefix < $before && $prefix < $after && $decoded[$prefix] === $redacted[$prefix]) {
+        while ($prefix < $matched && $prefix < $written && $match[$prefix] === $replacement[$prefix]) {
             $prefix++;
         }
 
         $suffix = 0;
 
-        while ($suffix < $before - $prefix && $suffix < $after - $prefix && $decoded[$before - 1 - $suffix] === $redacted[$after - 1 - $suffix]) {
+        while ($suffix < $matched - $prefix && $suffix < $written - $prefix && $match[$matched - 1 - $suffix] === $replacement[$written - 1 - $suffix]) {
             $suffix++;
         }
 
-        // A mask is written whole or not at all: a common prefix or suffix
-        // that stops inside one would encode half of it.
-        preg_match_all(self::MASK_PATTERN, $redacted, $masks, PREG_OFFSET_CAPTURE);
+        preg_match_all(self::MASK_PATTERN, $replacement, $masks, PREG_OFFSET_CAPTURE);
 
         foreach ($masks[0] as [$mask, $start]) {
             $end = $start + strlen($mask);
@@ -463,66 +589,50 @@ class ValueRedactor
                 $prefix = $start;
             }
 
-            if ($start < $after - $suffix && $after - $suffix < $end) {
-                $suffix = $after - $end;
+            if ($start < $written - $suffix && $written - $suffix < $end) {
+                $suffix = $written - $end;
             }
         }
 
-        $middle = substr($redacted, $prefix, $after - $prefix - $suffix);
-        $pieces = preg_split(self::MASK_PATTERN, $middle, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$middle];
-        $written = '';
-
-        foreach ($pieces as $index => $piece) {
-            $written .= $index % 2 === 1 ? $piece : rawurlencode($piece);
-        }
-
-        return substr($text, 0, $origin[$prefix]).$written.substr($text, $origin[$before - $suffix]);
+        $edits[] = [$at + $prefix, $at + $matched - $suffix, substr($replacement, $prefix, $written - $prefix - $suffix)];
     }
 
     /**
-     * The built-in patterns named, in order, over the text; null when the
-     * engine failed.
+     * One custom pattern over the text; null when the engine failed.
      *
-     * @param  array<int, string>  $names
+     * A decoded layer may hold bytes that are not UTF-8 (`caf%E9`, a
+     * Latin-1 address): a pattern written with `/u` cannot read them, so it
+     * reads the layer with each such byte written `?`, the same length, and
+     * its masks are put in the layer itself. The text as written keeps the
+     * old verdict: unreadable, withheld.
+     *
+     * @return array{0: string, 1: array<int, array{0: int, 1: int, 2: string}>}|null
      */
-    private function applyNames(string $text, array $names): ?string
+    private function applyCustom(string $text, string $label, string $pattern, int $depth): ?array
     {
-        foreach ($names as $name) {
-            $text = $this->apply($text, $name);
+        $subject = $depth > 0 && self::isUnicode($pattern) && preg_match('//u', $text) !== 1
+            ? self::scrubUtf8($text)
+            : $text;
 
-            if ($text === null) {
-                return null;
+        $mask = $this->mask($label);
+        $edits = [];
+
+        $replaced = @preg_replace_callback($pattern, function (array $m) use (&$edits, $mask): string {
+            if ($m[0][0] !== $mask) {
+                $edits[] = [$m[0][1], $m[0][1] + strlen($m[0][0]), $mask];
             }
+
+            return $mask;
+        }, $subject, -1, $count, PREG_OFFSET_CAPTURE);
+
+        // The pattern compiled (the constructor checked), so a null here is
+        // the engine giving up on this value: a backtrack or recursion limit,
+        // or bytes that are not the UTF-8 the pattern asked for.
+        if (! is_string($replaced)) {
+            return null;
         }
 
-        return $text;
-    }
-
-    /**
-     * The custom patterns over the text; null when the engine failed. Those
-     * written with `/u` are skipped when `$skipUnicode` says the text is not
-     * UTF-8.
-     */
-    private function applyCustom(string $text, bool $skipUnicode): ?string
-    {
-        foreach ($this->custom as $label => $pattern) {
-            if ($skipUnicode && self::isUnicode($pattern)) {
-                continue;
-            }
-
-            $replaced = @preg_replace($pattern, $this->mask($label), $text);
-
-            // The pattern compiled (the constructor checked), so a null here
-            // is the engine giving up on this value: a backtrack or recursion
-            // limit, or bytes that are not the UTF-8 the pattern asked for.
-            if (! is_string($replaced)) {
-                return null;
-            }
-
-            $text = $replaced;
-        }
-
-        return $text;
+        return [$subject === $text ? $replaced : self::rewrite($text, $edits), $edits];
     }
 
     /**
@@ -539,17 +649,50 @@ class ValueRedactor
     }
 
     /**
+     * The text with each byte that is not part of a UTF-8 character written
+     * `?`: same length, same positions.
+     */
+    private static function scrubUtf8(string $text): string
+    {
+        $out = '';
+
+        for ($i = 0, $length = strlen($text); $i < $length;) {
+            $byte = ord($text[$i]);
+            $size = match (true) {
+                $byte < 0x80 => 1,
+                $byte >= 0xC2 && $byte <= 0xDF => 2,
+                $byte >= 0xE0 && $byte <= 0xEF => 3,
+                $byte >= 0xF0 && $byte <= 0xF4 => 4,
+                default => 0,
+            };
+
+            if ($size === 1 || ($size > 1 && preg_match('//u', substr($text, $i, $size)) === 1 && $i + $size <= $length)) {
+                $out .= substr($text, $i, max($size, 1));
+                $i += max($size, 1);
+
+                continue;
+            }
+
+            $out .= '?';
+            $i++;
+        }
+
+        return $out;
+    }
+
+    /**
      * A long text in pieces no pattern straddles.
      *
      * Every shape but the key block sits on one line, so a piece ends on the
      * last line break of the window; a window with no line break ends on its
      * last space, and one with no space on its last byte outside the alphabet
      * every token is written in, the backslash of an escaped slash (`\/`, as
-     * json_encode writes it) included, and every character a percent-encoded
-     * value is written with (`~ ! $ ' ( ) * , ;`), or a DSN password written
-     * `pa;ss` inside an encoded value is cut in half. A window with none of those is one run of
-     * token characters, a blob, and is cut where it is: the half of a token
-     * on either side of that cut is not a token any more.
+     * json_encode writes it) included, and so is every character a
+     * percent-encoded value is written with (`~ ! $ ' ( ) * , ;`), or a DSN
+     * password written `pa;ss` inside an encoded value was cut in half. A
+     * window with none of those is one run of token characters, a blob, and
+     * is cut where it is: the half of a token on either side of that cut is
+     * not a token any more.
      *
      * @return iterable<int, string>
      */
@@ -593,43 +736,186 @@ class ValueRedactor
     }
 
     /**
-     * One pattern over the text. Null when the engine failed, which the
-     * caller turns into UNSCANNABLE; the old behaviour, handing the text back
-     * as it came, sent precisely the value nothing had read.
+     * One built-in pattern over the text, and where it put its masks. Null
+     * when the engine failed, which the caller turns into UNSCANNABLE; the
+     * old behaviour, handing the text back as it came, sent precisely the
+     * value nothing had read.
+     *
+     * @return array{0: string, 1: array<int, array{0: int, 1: int, 2: string}>}|null
      */
-    private function apply(string $text, string $name): ?string
+    private function apply(string $text, string $name, int $depth, ?string $parent): ?array
     {
-        if ($name === 'url_password') {
-            return $this->applyUrlPassword($text);
+        if (! self::mightMatch($name, $text)) {
+            return [$text, []];
         }
+
+        if ($name === 'url_password') {
+            return $this->applyUrlPassword($text, $depth, $parent);
+        }
+
+        if ($name === 'card') {
+            return $this->applyCard($text);
+        }
+
+        $edits = [];
 
         $replaced = @preg_replace_callback(
             $this->pattern($name),
-            fn (array $m): string => $this->replacement($name, $m),
+            function (array $m) use ($name, &$edits): string {
+                $groups = array_map(fn (array $group): string => $group[0], $m);
+                $replacement = $this->replacement($name, $groups);
+                self::edit($edits, $m[0][1], $m[0][0], $replacement);
+
+                return $replacement;
+            },
             $text,
+            -1,
+            $count,
+            PREG_OFFSET_CAPTURE,
         );
 
-        return is_string($replaced) ? $replaced : null;
+        return is_string($replaced) ? [$replaced, $edits] : null;
+    }
+
+    /**
+     * Whether a text holds what a shape needs before it can match: a test of
+     * a few bytes that spares most strings the pattern itself. It never
+     * answers no where the pattern could match.
+     */
+    private static function mightMatch(string $name, string $text): bool
+    {
+        return match ($name) {
+            'private_key' => str_contains($text, 'PRIVATE KEY'),
+            'jwt' => str_contains($text, 'eyJ'),
+            'stripe' => str_contains($text, '_live_') || str_contains($text, '_test_') || str_contains($text, 'whsec_'),
+            'aws' => str_contains($text, 'AKIA') || str_contains($text, 'ASIA'),
+            'aws_secret' => stripos($text, '[redacted:aws]') !== false || stripos($text, 'aws_secret') !== false,
+            'github' => str_contains($text, 'gh') || str_contains($text, 'github_pat_'),
+            'gitlab' => str_contains($text, 'gl') && str_contains($text, '-'),
+            'slack' => str_contains($text, 'xox') || str_contains($text, 'xapp-') || str_contains($text, 'hooks.slack.com'),
+            'app_key' => str_contains($text, 'base64:'),
+            'project_key' => str_contains($text, 'lm_'),
+            'url_password' => str_contains($text, ':/') || str_contains($text, ':\\/'),
+            'email' => str_contains($text, '@'),
+            'iban', 'card', 'nir' => strpbrk($text, '0123456789') !== false,
+            'phone' => str_contains($text, '0') || str_contains($text, '+'),
+            default => true,
+        };
+    }
+
+    /**
+     * The card numbers of a text: every run of digit groups (one space or
+     * hyphen between two groups) is read, and in it the spans that are a
+     * card are masked.
+     *
+     * A single pattern used to take thirteen to nineteen digits greedily
+     * and give up when Luhn refused them, never retrying: a card followed by
+     * its expiry (`4111 1111 1111 1111 12/27`) or preceded by a phone number
+     * was one run that failed and left in clear, and a second pass, once the
+     * phone was masked, found the card the first had missed. So the whole
+     * run is tried when it holds thirteen to nineteen digits, as before, and
+     * failing that every span of whole groups laid out as a card is (groups
+     * of four, the last shorter; American Express 4-6-5, Diners 4-6-4; or
+     * one group of thirteen to nineteen), the longest first from each group,
+     * and only one that passes Luhn is masked. A layout rather than any span,
+     * since Luhn accepts one sequence in ten and a long list of digit groups
+     * holds many spans.
+     *
+     * @return array{0: string, 1: array<int, array{0: int, 1: int, 2: string}>}|null
+     */
+    private function applyCard(string $text): ?array
+    {
+        if (@preg_match_all('/(?<!\d)\d++(?:[ \-]\d++)*+/', $text, $runs, PREG_OFFSET_CAPTURE) === false) {
+            return null;
+        }
+
+        $edits = [];
+        $mask = $this->mask('card');
+
+        foreach ($runs[0] as [$run, $at]) {
+            $plain = preg_replace('/\D/', '', $run) ?? '';
+
+            if (strlen($plain) < 13) {
+                continue;
+            }
+
+            if (strlen($plain) <= 19 && $this->passesLuhn($plain)) {
+                $edits[] = [$at, $at + strlen($run), $mask];
+
+                continue;
+            }
+
+            preg_match_all('/\d++/', $run, $found, PREG_OFFSET_CAPTURE);
+            $groups = $found[0];
+            $count = count($groups);
+
+            for ($from = 0; $from < $count; $from++) {
+                $digits = '';
+                $best = null;
+
+                for ($to = $from; $to < $count && strlen($digits) + strlen($groups[$to][0]) <= 19; $to++) {
+                    $digits .= $groups[$to][0];
+                    $sizes = array_map(fn (array $group): int => strlen($group[0]), array_slice($groups, $from, $to - $from + 1));
+
+                    if (strlen($digits) >= 13 && self::laidOutAsCard($sizes) && $this->passesLuhn($digits)) {
+                        $best = $to;
+                    }
+                }
+
+                if ($best !== null) {
+                    $start = $at + $groups[$from][1];
+                    $edits[] = [$start, $at + $groups[$best][1] + strlen($groups[$best][0]), $mask];
+                    $from = $best;
+                }
+            }
+        }
+
+        return [self::rewrite($text, $edits), $edits];
+    }
+
+    /**
+     * Whether digit groups of these sizes are laid out as a card number.
+     *
+     * @param  array<int, int>  $sizes
+     */
+    private static function laidOutAsCard(array $sizes): bool
+    {
+        if (count($sizes) === 1) {
+            return $sizes[0] >= 13 && $sizes[0] <= 19;
+        }
+
+        if ($sizes === [4, 6, 5] || $sizes === [4, 6, 4]) {
+            return true;
+        }
+
+        $last = array_pop($sizes);
+
+        return $last >= 1 && $last <= 4 && array_unique($sizes) === [4];
     }
 
     /**
      * The `url_password` pattern over the text, one address at a time.
      *
-     * The password runs to the last `@` the text allows, which in a query
-     * string can be the `@` of an email in a later parameter
-     * (`?dsn=redis://u:pw@cache&email=a@b.fr`, and every encoded query once
-     * it is read decoded): the whole query went into the mask. When a
-     * password crosses a `&name=` pair and what precedes that pair is an
-     * address of its own, only that address is masked and the reading goes
-     * on from the pair, so a second address further on is found too, and
-     * the email is left to its own pattern. Otherwise the `&name=` belongs
-     * to the password, and all of it goes, as before. Null when the engine
-     * failed.
+     * The password runs to the last `@` the text allows, which in a decoded
+     * query string can be the `@` of an email in a later parameter
+     * (`?dsn=redis%3A%2F%2Fu%3Apw%40cache&email=a%40b.fr` read decoded): the
+     * whole query went into the mask. So, in a decoded layer, when a
+     * password crosses a `&name=` pair whose `&` was WRITTEN (an encoded
+     * `%26` is ENCODED_AMPERSAND, part of the value), and what precedes the
+     * pair is an address that was written encoded (it does not appear as
+     * such in the text one level up), only that address is masked and the
+     * reading goes on from the pair. Everywhere else, in doubt, the whole
+     * password goes: `redis://default:Xy@9&k=Q7rT2@cache` may be one
+     * password, and masking too much costs a readable address where
+     * masking too little sends a secret. Null when the engine failed.
+     *
+     * @return array{0: string, 1: array<int, array{0: int, 1: int, 2: string}>}|null
      */
-    private function applyUrlPassword(string $text): ?string
+    private function applyUrlPassword(string $text, int $depth, ?string $parent): ?array
     {
         $pattern = $this->pattern('url_password');
         $out = '';
+        $edits = [];
         $offset = 0;
 
         while (true) {
@@ -640,7 +926,7 @@ class ValueRedactor
             }
 
             if ($found === 0) {
-                return $out.substr($text, $offset);
+                return [$out.substr($text, $offset), $edits];
             }
 
             [$whole, $start] = $m[0];
@@ -648,23 +934,50 @@ class ValueRedactor
             $password = $m[2][0];
             $out .= substr($text, $offset, $start - $offset);
 
-            if (! str_starts_with($password, '[redacted:') && preg_match('~&[^\s&=@/]*+=~', $password, $pair, PREG_OFFSET_CAPTURE) === 1) {
-                $head = substr($text, $start, strlen($prefix) + $pair[0][1]);
-                $masked = $this->applyUrlPassword($head);
+            // An address that ends on a `&` was chosen because the longest
+            // reading failed further on: when an `@` still follows before
+            // the next blank, the password may run to it
+            // (`redis://default:Xy@9&k=Q7rT2@cache.internal:6379~`), and in
+            // doubt it does.
+            $after = $start + strlen($whole) + strlen($m[3][0]);
 
-                if ($masked === null) {
-                    return null;
-                }
+            if (($text[$after] ?? '') === '&') {
+                $rest = substr($text, $after, strcspn($text, " \t\n\r\"'?\\", $after));
+                $last = strrpos($rest, '@');
 
-                if ($masked !== $head) {
-                    $out .= $masked;
-                    $offset = $start + strlen($head);
-
-                    continue;
+                if ($last !== false) {
+                    $password = substr($text, $start + strlen($prefix), $after + $last - $start - strlen($prefix));
+                    $whole = $prefix.$password.'@';
                 }
             }
 
-            $out .= $this->replacement('url_password', [$whole, $prefix, $password]);
+            if ($depth > 0 && $parent !== null && ! str_starts_with($password, '[redacted:')
+                && preg_match('~&[^\s&=@/]*+=~', $password, $pair, PREG_OFFSET_CAPTURE) === 1) {
+                $head = substr($text, $start, strlen($prefix) + $pair[0][1]);
+
+                if (! str_contains($parent, $head)) {
+                    $masked = $this->applyUrlPassword($head, $depth, $parent);
+
+                    if ($masked === null) {
+                        return null;
+                    }
+
+                    if ($masked[0] !== $head) {
+                        foreach ($masked[1] as [$from, $to, $replacement]) {
+                            $edits[] = [$start + $from, $start + $to, $replacement];
+                        }
+
+                        $out .= $masked[0];
+                        $offset = $start + strlen($head);
+
+                        continue;
+                    }
+                }
+            }
+
+            $replacement = $this->replacement('url_password', [$whole, $prefix, $password]);
+            self::edit($edits, $start, $whole, $replacement);
+            $out .= $replacement;
             $offset = $start + strlen($whole);
         }
     }
@@ -744,14 +1057,19 @@ class ValueRedactor
             // number, or `https://host:8080/users/a@b.fr` would read the
             // port as a user. Every candidate `@` has to be followed by a
             // host and then a delimiter, which is what tells the last `@` of
-            // the authority from one in a path or a query; an `&` is one,
-            // since an address passed as a parameter ends there once the
-            // query is decoded (`?dsn=redis://u:pw@cache&x=1`); and a
-            // password that runs across a `&name=` pair is taken back to
-            // the address before it (see replacement()). The user may
+            // the authority from one in a path or a query: an `&` (an
+            // address passed as a parameter ends there once the query is
+            // decoded, `?dsn=redis://u:pw@cache&x=1`; an encoded one reads
+            // as ENCODED_AMPERSAND), and the punctuation a sentence puts
+            // around an address: `)`, `,`, `;`, `>`, a backquote, a final
+            // `.`. A password that runs across a `&name=` pair is read again
+            // by applyUrlPassword(). Every run is bounded (a scheme of 32, a
+            // user and a password of 256, a host of 253, a port of five
+            // digits): unbounded, a text of `redis://u:aa@!` repeated cost
+            // 615 ms at 64 KB, every start retrying every end. The user may
             // already be a mask (a token written there was labelled a step
             // earlier), whose own colon must not be read as the separator.
-            'url_password' => '~(?<![A-Za-z0-9+.\-])([a-z][a-z0-9+.\-]*:(?:\\\\?/){2}(?:\[redacted:[a-z_]+\]|[^\s/:"\'\\\\]*):)((?:(?!\d+/)[^\s"\'?\\\\]+|[^\s"\'?/\\\\]+))@(?=[A-Za-z0-9._\-\[\]]+(?::\d+)?(?:[\s/?#&"\']|\\\\/|$))~i',
+            'url_password' => '~(?<![A-Za-z0-9+.\-])([a-z][a-z0-9+.\-]{0,31}:(?:\\\\?/){2}(?:\[redacted:[a-z_]+\]|[^\s/:"\'\\\\]{0,256}):)((?:(?!\d+/)[^\s"\'?\\\\]{1,256}|[^\s"\'?/\\\\]{1,256}))@(?=([A-Za-z0-9._\-\[\]]{1,253}(?::\d{1,5})?)(?:[\s/?#&"\'),;>`\x00]|%[0-9A-Fa-f]{2}|\.(?:\s|$)|\\\\/|$))~i',
 
             // Deliberately not RFC 5322. That grammar matches things nobody
             // types and is a backtracking hazard in a hot path.

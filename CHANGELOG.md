@@ -64,7 +64,14 @@ All notable changes to `quiet-guard/monitor-php`.
   passed as a parameter and encoded again), then the personal shapes; only
   the value is rewritten, the mask unencoded (`?email=[redacted:email]`),
   every other byte as it was written. The password of an address no longer
-  runs across a `&name=` pair to the `@` of an email further on.
+  runs across a `&name=` pair to the `@` of an email further on, in a decoded
+  layer only and only on a written `&`: in doubt, the whole password goes.
+- `card` is read on every run of digit groups: the whole run (13 to 19
+  digits), failing that a span laid out as a card, so a card next to its
+  expiry or a phone number is found, and a second pass finds nothing new.
+- `url_password` is bounded (a 256-character password) and ends on the
+  punctuation of a sentence (`)`, `,`, `;`, `>`, a backquote, a final `.`).
+- A custom label holding a bracket or a line break is refused.
 - `Scrubber::scrubLines()` masks whole a line that hands a string literal to a
   call whose arguments are credentials (`Scrubber::CREDENTIAL_CALLS`: `new
   PDO`, `new mysqli`, `mysqli_connect`, `mysqli_real_connect`,
