@@ -482,6 +482,36 @@ class Scrubber
     public const LINE_NEEDLES = ['key', 'auth', 'credential', 'salt', 'private', 'dsn', 'bearer', 'sk_', 'pk_'];
 
     /**
+     * The calls whose arguments ARE a credential, whatever the arguments are
+     * called: a database handle takes its password positionally, and a line
+     * such as `new PDO($dsn, 'root', 'hunter2')` names no word of any list.
+     * A line that calls one of these with at least one string literal among
+     * its own arguments goes whole; `new PDO($dsn, $user, $password)` names
+     * nothing and stays, by the same rule as everywhere else (a secret is
+     * named AND given a value). `new` forms are matched on `new <name>(`, the
+     * functions on their bare name, with or without a leading backslash.
+     *
+     * @var array<int, string>
+     */
+    public const CREDENTIAL_CALLS = [
+        'PDO', 'mysqli',
+        'mysqli_connect', 'mysqli_real_connect', 'mysql_connect', 'pg_connect', 'pg_pconnect', 'oci_connect',
+        'ldap_bind', 'ftp_login', 'imap_open', 'ssh2_auth_password',
+    ];
+
+    /**
+     * Whether a key of that name is masked: the rule scrub() applies to an
+     * array key (substring, case-insensitive, a hyphen reading as an
+     * underscore, a configured name also found without its separators), made
+     * public so an adapter can ask it about a name of its own, a route
+     * parameter above all.
+     */
+    public function masks(string $key): bool
+    {
+        return $this->matches(strtolower($key));
+    }
+
+    /**
      * Mask every source line that names a secret and gives it a value.
      *
      * A snippet is source code, and source code is where a hardcoded secret
@@ -521,6 +551,10 @@ class Scrubber
 
     private function namesAValue(string $line): bool
     {
+        if ($this->handsACredentialToACall($line)) {
+            return true;
+        }
+
         $lower = strtolower($line);
 
         foreach ($this->lineNeedles as $needle) {
@@ -536,6 +570,46 @@ class Scrubber
             // never the first colon of `::`, or every `Auth::` line would.
             if (preg_match('/'.preg_quote($needle, '/').'\w*(?:[\'"]?\s*(?:=>|=|:(?!:))|[\'"]\s*\]\s*=|[\'"]\s*,|\(\s*[\'"])/i', $line) === 1) {
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether the line calls one of CREDENTIAL_CALLS with a string literal
+     * among the call's OWN arguments. The arguments are walked from the
+     * opening parenthesis to its match, nested calls skipped over: a literal
+     * inside `env('DB_PASSWORD')` names a variable, not a secret, and the line
+     * stays. A call whose arguments continue on the next lines is read on
+     * this line alone, which is the known limit of a per-line rule.
+     */
+    private function handsACredentialToACall(string $line): bool
+    {
+        $names = implode('|', array_map(fn (string $name): string => preg_quote($name, '/'), self::CREDENTIAL_CALLS));
+
+        if (preg_match_all('/(?:\bnew\s+\\\\?|(?<![\w\\\\>:$]))\\\\?(?:'.$names.')\s*\(/i', $line, $calls, PREG_OFFSET_CAPTURE) === 0) {
+            return false;
+        }
+
+        foreach ($calls[0] as [$call, $offset]) {
+            $depth = 0;
+            $length = strlen($line);
+
+            for ($i = $offset + strlen($call); $i < $length; $i++) {
+                $char = $line[$i];
+
+                if ($char === '(') {
+                    $depth++;
+                } elseif ($char === ')') {
+                    if ($depth === 0) {
+                        break;
+                    }
+
+                    $depth--;
+                } elseif ($depth === 0 && ($char === '\'' || $char === '"')) {
+                    return true;
+                }
             }
         }
 
