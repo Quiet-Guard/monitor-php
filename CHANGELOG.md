@@ -56,6 +56,12 @@ All notable changes to `quiet-guard/monitor-php`.
   the bytes of one character, or a custom pattern written with `/u` failed on
   it. The private key block is read without backtracking, so a block of a
   megabyte comes out masked rather than unscannable.
+- A percent-encoded value is read decoded (`ValueRedactor`): `fullUrl()` and
+  `getUri()` write the query string encoded, so an email (`%40`), a number,
+  an IBAN or a card written with spaces (`%20`), a DSN or an application key
+  passed as a parameter left in clear in the reported URL. Only the part that
+  changed is rewritten, the mask unencoded (`?email=[redacted:email]`), the
+  rest byte for byte.
 - `Scrubber::scrubLines()` masks whole a line that hands a string literal to a
   call whose arguments are credentials (`Scrubber::CREDENTIAL_CALLS`: `new
   PDO`, `new mysqli`, `mysqli_connect`, `mysqli_real_connect`,

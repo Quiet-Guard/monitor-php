@@ -91,6 +91,11 @@ class ValueRedactor
      */
     public const CHUNK_BYTES = 65536;
 
+    /**
+     * A mask as mask() writes it, the custom labels included.
+     */
+    private const MASK_PATTERN = '~(\[redacted:[^\]\s\[]*\])~';
+
     /** @var array<int, string> */
     private array $enabled;
 
@@ -211,11 +216,173 @@ class ValueRedactor
     }
 
     /**
-     * One piece of text through every enabled pattern, then the custom ones.
+     * One piece of text through every enabled pattern, then the custom ones,
+     * as it is written and then decoded where it is percent-encoded
+     * (redactEncodedRuns()).
      *
      * @param  array<int, string>  $names
      */
     private function redactChunk(string $text, array $names): string
+    {
+        $text = $this->redactPlain($text, $names);
+
+        if ($text === self::UNSCANNABLE || ! str_contains($text, '%')) {
+            return $text;
+        }
+
+        return $this->redactEncodedRuns($text);
+    }
+
+    /**
+     * The shapes in the percent-encoded runs of a text, read decoded.
+     *
+     * An address is written encoded: `fullUrl()` in Laravel and `getUri()` in
+     * Symfony both rewrite the query string in RFC 3986 form, so the email a
+     * visitor typed into `?email=` travels as `jeanne.martin%40example.fr`, a
+     * number written with spaces as `06%2012%2034%2056%2078`, a DSN passed as
+     * a parameter as `redis%3A%2F%2Fu%3Asecret%40cache`. Read as typed, none
+     * of those is the shape its pattern knows, and they went out in clear in
+     * the `url` field while the same values were masked in the `query` array
+     * beside it.
+     *
+     * A run is a stretch of the characters an encoded value is written with
+     * (the unreserved ones, `:`, `@` and the sub-delimiters but `&` and `=`)
+     * holding at least one `%XX`; `/`, `?`, `#`, `&`, `=`, `[`, `]` and
+     * whitespace end it, so a name is
+     * never decoded into its value and a path segment never into the next.
+     * Each run is decoded once (rawurldecode: a `+` stays a `+`, so a
+     * `q=jeanne+martin` is not touched), read by the same patterns, and when
+     * nothing changes it is handed back byte for byte. When something does,
+     * only the part that changed is rewritten: the bytes before and after it
+     * keep their original spelling, the mask is written as the redactor
+     * writes it anywhere else, `[redacted:email]`, unencoded so the address
+     * stays readable and the same mask is found whether the value came
+     * encoded or not, and what sits between two masks of one run is
+     * re-encoded with rawurlencode, the form both frameworks use. A mask
+     * holds no run character (`[` ends a run), so a second pass reads
+     * nothing new: the rule is idempotent.
+     *
+     * Every enabled pattern applies to a decoded run, the key block included
+     * (a long text read in chunks has had it removed from the chunk list,
+     * since it is read on the whole text first; encoded, it sits inside one
+     * run). A single decoding: a value encoded twice (`%2540`) is not
+     * opened.
+     */
+    private function redactEncodedRuns(string $text): string
+    {
+        $failed = false;
+
+        $out = @preg_replace_callback(
+            '~(?:[A-Za-z0-9._\~!$\'()*+,;:@\-]++|%[0-9A-Fa-f]{2})++~',
+            function (array $m) use (&$failed): string {
+                $run = $m[0];
+
+                if ($failed || ! str_contains($run, '%')) {
+                    return $run;
+                }
+
+                $rewritten = $this->redactRun($run);
+
+                if ($rewritten === null) {
+                    $failed = true;
+
+                    return $run;
+                }
+
+                return $rewritten;
+            },
+            $text,
+        );
+
+        return ! is_string($out) || $failed ? self::UNSCANNABLE : $out;
+    }
+
+    /**
+     * One encoded run, its shapes masked; null when the engine failed.
+     *
+     * Each decoded byte remembers where it came from, so the part that
+     * changed is located in the decoded text (the longest common prefix and
+     * suffix of before and after) and replaced in the original run, the rest
+     * of which stays as it was written.
+     */
+    private function redactRun(string $run): ?string
+    {
+        $decoded = '';
+        $origin = [];
+        $length = strlen($run);
+
+        for ($i = 0; $i < $length;) {
+            $origin[] = $i;
+
+            // The run pattern admits a `%` only before two hex digits.
+            if ($run[$i] === '%') {
+                $decoded .= chr((int) hexdec(substr($run, $i + 1, 2)));
+                $i += 3;
+            } else {
+                $decoded .= $run[$i];
+                $i++;
+            }
+        }
+
+        $origin[] = $length;
+        $redacted = $this->redactPlain($decoded, $this->enabled);
+
+        if ($redacted === self::UNSCANNABLE) {
+            return null;
+        }
+
+        if ($redacted === $decoded) {
+            return $run;
+        }
+
+        $before = strlen($decoded);
+        $after = strlen($redacted);
+        $prefix = 0;
+
+        while ($prefix < $before && $prefix < $after && $decoded[$prefix] === $redacted[$prefix]) {
+            $prefix++;
+        }
+
+        $suffix = 0;
+
+        while ($suffix < $before - $prefix && $suffix < $after - $prefix && $decoded[$before - 1 - $suffix] === $redacted[$after - 1 - $suffix]) {
+            $suffix++;
+        }
+
+        // A mask is written whole or not at all: a common prefix or suffix
+        // that stops inside one would encode half of it.
+        preg_match_all(self::MASK_PATTERN, $redacted, $masks, PREG_OFFSET_CAPTURE);
+
+        foreach ($masks[0] as [$mask, $start]) {
+            $end = $start + strlen($mask);
+
+            if ($start < $prefix && $prefix < $end) {
+                $prefix = $start;
+            }
+
+            if ($start < $after - $suffix && $after - $suffix < $end) {
+                $suffix = $after - $end;
+            }
+        }
+
+        $middle = substr($redacted, $prefix, $after - $prefix - $suffix);
+        $pieces = preg_split(self::MASK_PATTERN, $middle, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$middle];
+        $written = '';
+
+        foreach ($pieces as $index => $piece) {
+            $written .= $index % 2 === 1 ? $piece : rawurlencode($piece);
+        }
+
+        return substr($run, 0, $origin[$prefix]).$written.substr($run, $origin[$before - $suffix]);
+    }
+
+    /**
+     * One piece of text through every enabled pattern, then the custom ones,
+     * as it is written.
+     *
+     * @param  array<int, string>  $names
+     */
+    private function redactPlain(string $text, array $names): string
     {
         foreach ($names as $name) {
             $text = $this->apply($text, $name);
