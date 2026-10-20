@@ -850,12 +850,22 @@ class ValueRedactor
             $count = count($groups);
 
             for ($from = 0; $from < $count; $from++) {
+                // Every layout opens on a group of four or is one group of
+                // thirteen to nineteen: any other first group starts no card,
+                // and reading on from it cost seconds on a run of `1 1 1`.
+                $first = strlen($groups[$from][0]);
+
+                if ($first !== 4 && ($first < 13 || $first > 19)) {
+                    continue;
+                }
+
                 $digits = '';
+                $sizes = [];
                 $best = null;
 
                 for ($to = $from; $to < $count && strlen($digits) + strlen($groups[$to][0]) <= 19; $to++) {
                     $digits .= $groups[$to][0];
-                    $sizes = array_map(fn (array $group): int => strlen($group[0]), array_slice($groups, $from, $to - $from + 1));
+                    $sizes[] = strlen($groups[$to][0]);
 
                     if (strlen($digits) >= 13 && self::laidOutAsCard($sizes) && $this->passesLuhn($digits)) {
                         $best = $to;
@@ -949,6 +959,20 @@ class ValueRedactor
                     $password = substr($text, $start + strlen($prefix), $after + $last - $start - strlen($prefix));
                     $whole = $prefix.$password.'@';
                 }
+            }
+
+            // A password that opens on a mask and runs past it has crossed
+            // into the next address (`redis://u:sk_live_...@a,redis://v:pw@b`:
+            // the token was masked a step earlier, and the password ran on to
+            // the last `@`): keep the mask, read on after it, so the next
+            // address is read as an address. The old rule kept the whole
+            // match as it was, which sent the second password in clear.
+            if (preg_match('~^\[redacted:[^\]\[\n]*\]~', $password, $lead) === 1 && strlen($lead[0]) < strlen($password)) {
+                $keep = strlen($prefix) + strlen($lead[0]);
+                $out .= substr($text, $start, $keep);
+                $offset = $start + $keep;
+
+                continue;
             }
 
             if ($depth > 0 && $parent !== null && ! str_starts_with($password, '[redacted:')
