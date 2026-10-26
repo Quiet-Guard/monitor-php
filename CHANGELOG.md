@@ -2,6 +2,11 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
+## v0.7.0
+
+No change in the core: released alongside the Laravel SDK, whose
+`monitor:test` and browser errors need no new core API.
+
 ## v0.6.0
 
 ### Security
