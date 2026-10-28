@@ -2,6 +2,18 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
+## Unreleased
+
+### Security
+
+- `Reporter` turns the objects of a log context, and of an exception
+  context, into the data `json_encode` would have sent BEFORE the scrubber
+  and the redactor run. Both walk arrays and strings only, so an object (a
+  DTO, a collection) was expanded by the HTTP client after them, and a
+  `password` it carried left in clear under a key that was not itself
+  secret-named. This covers the Symfony bundle and the WordPress plugin,
+  which report through `Reporter`.
+
 ## v0.7.0
 
 No change in the core: released alongside the Laravel SDK, whose

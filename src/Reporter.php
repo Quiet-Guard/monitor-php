@@ -44,7 +44,7 @@ class Reporter
     public function reportException(Throwable $e, array $context = []): bool
     {
         $payload = $this->builder->build($e, $context);
-        $payload['context'] = $this->scrubber->scrub($payload['context']);
+        $payload['context'] = $this->scrubber->scrub(self::plain($payload['context']));
         $payload['exception']['trace'] = $this->scrubber->scrubSnippets($payload['exception']['trace'] ?? []);
 
         // Bornée APRÈS le masquage : masquer REMPLACE une valeur par une
@@ -65,9 +65,40 @@ class Reporter
             return true;
         }
 
+        foreach ($logs as $index => $log) {
+            if (is_array($log['context'] ?? null)) {
+                $logs[$index]['context'] = self::plain($log['context']);
+            }
+        }
+
         return $this->post('/api/v1/logs', Cut::payload($this->redactor->redactAll(Cut::before(
             ['logs' => $this->scrubber->scrub($logs)],
         ))), 'logs');
+    }
+
+    /**
+     * The data json_encode would have sent, computed BEFORE masking: the
+     * scrubber and the redactor walk arrays and strings only, so an object (a
+     * DTO, a Collection) used to be expanded by the transport's json_encode,
+     * after them, with its 'password' in clear.
+     *
+     * @param  array<array-key, mixed>  $data
+     * @return array<array-key, mixed>
+     */
+    private static function plain(array $data): array
+    {
+        try {
+            $json = json_encode($data, JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        } catch (Throwable) {
+            // A jsonSerialize() that throws: reporting must not break the host.
+            $json = false;
+        }
+
+        $decoded = $json === false ? null : json_decode($json, true);
+
+        // Unencodable as a whole (too deep, a throwing object): sent empty
+        // rather than unmasked.
+        return is_array($decoded) ? $decoded : [];
     }
 
     /**
