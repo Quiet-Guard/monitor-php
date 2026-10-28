@@ -82,23 +82,52 @@ class Reporter
      * DTO, a Collection) used to be expanded by the transport's json_encode,
      * after them, with its 'password' in clear.
      *
+     * When the whole cannot be encoded (a jsonSerialize() that throws, a
+     * depth past 512), each key is tried alone, so one bad value costs that
+     * value and not the release, the environment or the request beside it.
+     *
      * @param  array<array-key, mixed>  $data
      * @return array<array-key, mixed>
      */
-    private static function plain(array $data): array
+    private static function plain(array $data, int $depth = 0): array
+    {
+        $whole = self::encodable($data);
+
+        if ($whole !== null) {
+            return $whole;
+        }
+
+        $plain = [];
+
+        foreach ($data as $key => $value) {
+            $alone = self::encodable([$value]);
+
+            $plain[$key] = match (true) {
+                $alone !== null => $alone[0] ?? null,
+                is_array($value) => $depth < 16 ? self::plain($value, $depth + 1) : '[depth]',
+                is_object($value) => $value::class,
+                default => null,
+            };
+        }
+
+        return $plain;
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $data
+     * @return array<array-key, mixed>|null
+     */
+    private static function encodable(array $data): ?array
     {
         try {
             $json = json_encode($data, JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
         } catch (Throwable) {
-            // A jsonSerialize() that throws: reporting must not break the host.
-            $json = false;
+            return null;
         }
 
         $decoded = $json === false ? null : json_decode($json, true);
 
-        // Unencodable as a whole (too deep, a throwing object): sent empty
-        // rather than unmasked.
-        return is_array($decoded) ? $decoded : [];
+        return is_array($decoded) ? $decoded : null;
     }
 
     /**

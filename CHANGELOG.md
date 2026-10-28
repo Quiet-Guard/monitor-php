@@ -2,7 +2,7 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
-## Unreleased
+## v0.7.1 (unreleased)
 
 ### Security
 
@@ -11,8 +11,9 @@ All notable changes to `quiet-guard/monitor-php`.
   and the redactor run. Both walk arrays and strings only, so an object (a
   DTO, a collection) was expanded by the HTTP client after them, and a
   `password` it carried left in clear under a key that was not itself
-  secret-named. This covers the Symfony bundle and the WordPress plugin,
-  which report through `Reporter`.
+  secret-named. This covers the Symfony bundle. When the whole context
+  cannot be encoded (a `jsonSerialize()` that throws, a depth past 512),
+  each key is tried alone, so one bad value costs that value only.
 
 ## v0.7.0
 
