@@ -2,7 +2,7 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
-## v0.7.1 (unreleased)
+## v0.7.1
 
 ### Security
 
