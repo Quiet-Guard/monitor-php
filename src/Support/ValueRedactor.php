@@ -1059,7 +1059,7 @@ class ValueRedactor
             // The signature of a presigned S3 address (SigV4, query form):
             // sixty-four hex digits after `X-Amz-Signature=`. The name stays,
             // the digits go; host, path and `X-Amz-Credential` stay readable.
-            'aws_presigned' => '~(?<![A-Za-z0-9])(X-Amz-Signature=)[0-9a-fA-F]{64}(?![0-9a-fA-F])~',
+            'aws_presigned' => '~(?<![A-Za-z0-9])((?i:X-Amz-Signature)=)[0-9a-fA-F]{64}(?![0-9a-fA-F])~',
 
             // The form `php artisan key:generate` writes: `base64:` then
             // thirty-two bytes, forty-four characters ending on one `=`. An
