@@ -2,6 +2,12 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
+## v0.8.0 (unreleased)
+
+### Security
+
+- The signature of a presigned S3 address (`X-Amz-Signature=` followed by 64 hex digits) is masked as `[redacted:aws_presigned]` in exception messages and logs, so a signed backup URL never leaves the application. The host, path and `X-Amz-Credential` stay readable.
+
 ## v0.7.1
 
 ### Security

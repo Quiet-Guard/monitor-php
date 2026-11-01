@@ -42,7 +42,7 @@ class ValueRedactor
      * runs otherwise bite into a token (`ghp_0612345678...` came out as
      * `[redacted:phone]`).
      */
-    public const CREDENTIALS = ['private_key', 'jwt', 'stripe', 'aws', 'aws_secret', 'github', 'gitlab', 'slack', 'app_key', 'project_key', 'url_password'];
+    public const CREDENTIALS = ['private_key', 'jwt', 'stripe', 'aws', 'aws_secret', 'github', 'gitlab', 'slack', 'app_key', 'project_key', 'aws_presigned', 'url_password'];
 
     /**
      * The list every client shipped as its default before 0.6.0, and wrote
@@ -795,6 +795,7 @@ class ValueRedactor
             'slack' => str_contains($text, 'xox') || str_contains($text, 'xapp-') || str_contains($text, 'hooks.slack.com'),
             'app_key' => str_contains($text, 'base64:'),
             'project_key' => str_contains($text, 'lm_'),
+            'aws_presigned' => stripos($text, 'X-Amz-Signature') !== false,
             'url_password' => str_contains($text, ':/') || str_contains($text, ':\\/'),
             'email' => str_contains($text, '@'),
             'iban', 'card', 'nir' => strpbrk($text, '0123456789') !== false,
@@ -1055,6 +1056,11 @@ class ValueRedactor
             // host and `/services/` stay, the three segments go.
             'slack' => '~(https:(?:\\\\?/){2}hooks\.slack\.com(?:\\\\?/)services(?:\\\\?/))[A-Za-z0-9]+(?:\\\\?/)[A-Za-z0-9]+(?:\\\\?/)[A-Za-z0-9]+|(?<![A-Za-z0-9_])(?:xox[abeprs]|xapp)-[A-Za-z0-9\-]{10,}~',
 
+            // The signature of a presigned S3 address (SigV4, query form):
+            // sixty-four hex digits after `X-Amz-Signature=`. The name stays,
+            // the digits go; host, path and `X-Amz-Credential` stay readable.
+            'aws_presigned' => '~(?<![A-Za-z0-9])(X-Amz-Signature=)[0-9a-fA-F]{64}(?![0-9a-fA-F])~',
+
             // The form `php artisan key:generate` writes: `base64:` then
             // thirty-two bytes, forty-four characters ending on one `=`. An
             // `=` may precede it: that is how a .env line writes it. A slash
@@ -1139,7 +1145,7 @@ class ValueRedactor
         // The shapes that keep an anchor and mask what follows it: the
         // webhook host before a Slack path, the key id or the name before
         // an AWS secret.
-        if (in_array($name, ['slack', 'aws_secret'], true) && isset($m[1]) && $m[1] !== '') {
+        if (in_array($name, ['slack', 'aws_secret', 'aws_presigned'], true) && isset($m[1]) && $m[1] !== '') {
             return $m[1].$this->mask($name);
         }
 
