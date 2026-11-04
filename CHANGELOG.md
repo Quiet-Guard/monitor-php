@@ -2,6 +2,10 @@
 
 All notable changes to `quiet-guard/monitor-php`.
 
+## v0.8.1
+
+No change of its own: released with the family for the WordPress plugin's fatal-error fix.
+
 ## v0.8.0
 
 ### Security
