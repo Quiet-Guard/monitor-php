@@ -32,7 +32,18 @@ final class SqlNormalizer
     /** Prefixes that turn the quoted string after them into a literal (X'..', N'..', E'..', B'..', U&'..'). */
     private const STRING_PREFIXES = ['x', 'b', 'e', 'n', 'u&'];
 
-    public static function normalize(string $sql): string
+    /**
+     * The drivers whose grammar quotes identifiers with double quotes rather
+     * than backticks: on them "users" is a table, not a value.
+     */
+    public const DOUBLE_QUOTED_IDENTIFIER_DRIVERS = ['pgsql', 'sqlite', 'sqlsrv'];
+
+    /**
+     * @param  bool  $doubleQuotedIdentifiers  true for Postgres, SQLite and SQL Server,
+     *                                         whose Laravel grammars write `"users"."id"`;
+     *                                         false (MySQL, MariaDB) reads "..." as a string
+     */
+    public static function normalize(string $sql, bool $doubleQuotedIdentifiers = false): string
     {
         $out = '';
         $length = strlen($sql);
@@ -65,7 +76,7 @@ final class SqlNormalizer
 
             // Quoted strings, single or double (MySQL reads "..." as a string by
             // default; Laravel quotes identifiers with backticks, kept below).
-            if ($char === "'" || $char === '"') {
+            if ($char === "'" || ($char === '"' && ! $doubleQuotedIdentifiers)) {
                 $out = self::dropLiteralPrefix($out).'?';
                 $i = self::skipQuoted($sql, $i, $char);
 
@@ -81,13 +92,14 @@ final class SqlNormalizer
                 continue;
             }
 
-            // Backtick identifiers stay as written (a doubled backtick escapes one).
-            if ($char === '`') {
+            // Quoted identifiers stay as written (a doubled quote escapes one):
+            // backticks always, double quotes on the drivers that use them so.
+            if ($char === '`' || $char === '"') {
                 $end = $i + 1;
 
                 while ($end < $length) {
-                    if ($sql[$end] === '`') {
-                        if (($sql[$end + 1] ?? '') === '`') {
+                    if ($sql[$end] === $char) {
+                        if (($sql[$end + 1] ?? '') === $char) {
                             $end += 2;
 
                             continue;
