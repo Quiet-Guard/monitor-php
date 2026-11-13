@@ -18,6 +18,10 @@ namespace QuietGuard\Monitor\Support;
  * hash. Over-masking costs nothing here: a lost identifier is a less precise
  * screen, a leaked value is personal data on our disks.
  *
+ * Every ambiguity resolves towards masking: a backslash inside a string, an
+ * unterminated quote, backtick or comment masks the rest of the statement, and
+ * reading `--`, a nested comment or a `$` the wrong way only removes text.
+ *
  * Known limit, stated wherever this is documented: a value carried by a table,
  * schema or alias name (`client_dupont.users`) is a name to the scanner.
  */
@@ -95,6 +99,14 @@ final class SqlNormalizer
                     $end++;
                 }
 
+                // Never closed: what follows cannot be told from a value, so it goes.
+                if ($end >= $length) {
+                    $out .= '?';
+                    $i = $length;
+
+                    continue;
+                }
+
                 $out .= substr($sql, $i, $end - $i + 1);
                 $i = $end + 1;
 
@@ -150,10 +162,12 @@ final class SqlNormalizer
         while ($i < $length) {
             $char = $sql[$i];
 
+            // A backslash escapes the quote in MySQL and not in SQLite or
+            // Postgres ('C:\' is a whole string there). Reading it the wrong
+            // way shifts every quote after it and lets the next value out, so
+            // the rest of the statement is masked instead of guessed.
             if ($char === '\\') {
-                $i += 2;
-
-                continue;
+                return $length;
             }
 
             if ($char === $quote) {
