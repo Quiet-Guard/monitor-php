@@ -194,11 +194,20 @@ final class SqlNormalizer
         }
 
         $before = rtrim($before);
+        $name = '"[A-Za-z_][A-Za-z0-9_$]{0,63}"';
+        $comparisonAfter = preg_match('/^\s*(?:[=<>!]|(?:not\s+)?(?:in|is|i?like|between)\b)/i', $after) === 1;
 
         return str_ends_with($before, '.')
             || str_starts_with(ltrim($after), '.')
             || preg_match('/\b(?:from|join|into|update|table|on|by|as|select|distinct)$/i', $before) === 1
-            || (preg_match('/^\s*(?:[=<>!]|(?:not\s+)?(?:in|is|i?like|between)\b)/i', $after) === 1
+            // The next element of a list whose previous element began with a
+            // kept name: select "id", "name" / set "a" = ?, "b" / by "x", "y".
+            || preg_match('/(?:^|[,(]|\b(?:select|distinct|by|set))\s*'.$name.'(?:\.(?:'.$name.'|\*))?[^,()]*,$/i', $before) === 1
+            // The column list after a table name: insert into "t" ("a", ...
+            || preg_match('/'.$name.'\s*\($/', $before) === 1
+            // A nested where group: where ("name" = ? or ...
+            || ($comparisonAfter && preg_match('/\b(?:where|and|or|on|not|having)\s*\($/i', $before) === 1)
+            || ($comparisonAfter
                 && preg_match('/(?:[=<>!(,]|\b(?:i?like|between|then|else|when|case|coalesce|is|in|values|limit|offset|match|glob|regexp))$/i', $before) !== 1);
     }
 
