@@ -119,8 +119,14 @@ final class SqlNormalizer
                     continue;
                 }
 
-                $out .= substr($sql, $i, $end - $i + 1);
+                $token = substr($sql, $i, $end - $i + 1);
                 $i = $end + 1;
+
+                // SQLite falls back to reading "..." as a string when no
+                // column has that name, and SQL Server does with
+                // QUOTED_IDENTIFIER off: a double-quoted token is kept only
+                // when it looks like a name and stands where a name stands.
+                $out .= $char === '"' && ! self::isIdentifierToken($token, $out) ? '?' : $token;
 
                 continue;
             }
@@ -156,6 +162,16 @@ final class SqlNormalizer
         $out = preg_replace('/(\((?:[^()]|\([^()]*\))*\))(?:\s*,\s*\((?:[^()]|\([^()]*\))*\))+/', '$1', $out) ?? $out;
 
         return mb_strlen($out) > self::MAX_LENGTH ? mb_substr($out, 0, self::MAX_LENGTH) : $out;
+    }
+
+    /**
+     * Whether a double-quoted token reads as a name: a plain identifier, not
+     * after a comparison or LIKE, not inside an IN (...) or VALUES (...) list.
+     */
+    private static function isIdentifierToken(string $token, string $out): bool
+    {
+        return preg_match('/^"[A-Za-z_][A-Za-z0-9_$]{0,63}"$/', $token) === 1
+            && preg_match('/(?:[=<>!]|\b(?:i?like|then|else|between)|\b(?:in|values)\s*\(\s*(?:\?\s*,\s*)*)\s*$/i', $out) !== 1;
     }
 
     private static function skipToLineEnd(string $sql, int $i): int

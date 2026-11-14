@@ -6,7 +6,7 @@ All notable changes to `quiet-guard/monitor-php`.
 
 ### Added
 
-- `Support\SqlNormalizer`: the shape of an SQL statement with every value taken out (strings, numbers, hex and bit literals, dollar-quoted strings, comments), lists of values collapsed to one placeholder. Every ambiguity masks the rest of the statement: a backslash inside a string, an unterminated quote, backtick or comment. Double quotes are identifiers on Postgres, SQLite and SQL Server (`DOUBLE_QUOTED_IDENTIFIER_DRIVERS`) and strings elsewhere. Used by the Laravel SDK's performance measurement, and run again by the server.
+- `Support\SqlNormalizer`: the shape of an SQL statement with every value taken out (strings, numbers, hex and bit literals, dollar-quoted strings, comments), lists of values collapsed to one placeholder. Every ambiguity masks the rest of the statement: a backslash inside a string, an unterminated quote, backtick or comment. Double quotes are strings on MySQL and MariaDB; on Postgres, SQLite and SQL Server (`DOUBLE_QUOTED_IDENTIFIER_DRIVERS`) a double-quoted token is kept only when it reads as a plain name and stands where a name stands (never after a comparison, LIKE, or inside IN or VALUES), since SQLite and SQL Server can read it as a string. Used by the Laravel SDK's performance measurement, and run again by the server.
 
 ## v0.9.0
 
