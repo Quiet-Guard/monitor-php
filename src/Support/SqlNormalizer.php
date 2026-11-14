@@ -32,6 +32,9 @@ final class SqlNormalizer
     /** Prefixes that turn the quoted string after them into a literal (X'..', N'..', E'..', B'..', U&'..'). */
     private const STRING_PREFIXES = ['x', 'b', 'e', 'n', 'u&'];
 
+    /** Every character the scanner acts on; anything else is copied as written. */
+    private const SIGNIFICANT = "'\"`$-#/.0123456789 \t\n\r\v\f";
+
     /**
      * The drivers whose grammar quotes identifiers with double quotes rather
      * than backticks: on them "users" is a table, not a value.
@@ -50,6 +53,16 @@ final class SqlNormalizer
         $i = 0;
 
         while ($i < $length) {
+            // A run of characters that start nothing is copied in one go.
+            $run = strcspn($sql, self::SIGNIFICANT, $i);
+
+            if ($run > 0) {
+                $out .= substr($sql, $i, $run);
+                $i += $run;
+
+                continue;
+            }
+
             $char = $sql[$i];
             $next = $sql[$i + 1] ?? '';
 
@@ -95,24 +108,15 @@ final class SqlNormalizer
             // Quoted identifiers stay as written (a doubled quote escapes one):
             // backticks always, double quotes on the drivers that use them so.
             if ($char === '`' || $char === '"') {
-                $end = $i + 1;
+                $end = strpos($sql, $char, $i + 1);
 
-                while ($end < $length) {
-                    if ($sql[$end] === $char) {
-                        if (($sql[$end + 1] ?? '') === $char) {
-                            $end += 2;
-
-                            continue;
-                        }
-
-                        break;
-                    }
-
-                    $end++;
+                // A doubled quote escapes one and does not close.
+                while ($end !== false && ($sql[$end + 1] ?? '') === $char) {
+                    $end = strpos($sql, $char, $end + 2);
                 }
 
                 // Never closed: what follows cannot be told from a value, so it goes.
-                if ($end >= $length) {
+                if ($end === false) {
                     $out .= '?';
                     $i = $length;
 
@@ -153,13 +157,19 @@ final class SqlNormalizer
             $i++;
         }
 
-        $out = trim(preg_replace('/ {2,}/', ' ', $out) ?? $out);
+        if (str_contains($out, '  ')) {
+            $out = preg_replace('/ {2,}/', ' ', $out) ?? $out;
+        }
+
+        $out = trim($out);
 
         // A list of placeholders is one placeholder, whatever its length: an eager
         // load of 3 keys and one of 300 are the same statement.
         $out = preg_replace('/\(\s*\?(?:\s*,\s*\?)+\s*\)/', '(...?)', $out) ?? $out;
         // INSERT ... VALUES (..), (..), (..) is one row's shape.
-        $out = preg_replace('/(\((?:[^()]|\([^()]*\))*\))(?:\s*,\s*\((?:[^()]|\([^()]*\))*\))+/', '$1', $out) ?? $out;
+        if (preg_match('/\)\s*,\s*\(/', $out) === 1) {
+            $out = preg_replace('/(\((?:[^()]|\([^()]*\))*\))(?:\s*,\s*\((?:[^()]|\([^()]*\))*\))+/', '$1', $out) ?? $out;
+        }
 
         return mb_strlen($out) > self::MAX_LENGTH ? mb_substr($out, 0, self::MAX_LENGTH) : $out;
     }
