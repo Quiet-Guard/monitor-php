@@ -66,23 +66,25 @@ final class SqlNormalizer
             $char = $sql[$i];
             $next = $sql[$i + 1] ?? '';
 
-            // Comments: dropped whole. An unterminated block comment drops the rest.
-            if ($char === '-' && $next === '-') {
-                $i = self::skipToLineEnd($sql, $i);
+            // Comments: dropped whole. An unterminated block comment drops the
+            // rest. Dialects disagree on where a comment ends (MySQL wants a
+            // space after --, Postgres nests /* */ and ends -- at \r): a comment
+            // that holds a quote, a nested opener or a \r may not be one for
+            // the database, so the rest of the statement goes.
+            if (($char === '-' && $next === '-') || $char === '#' || ($char === '/' && $next === '*')) {
+                $block = $char === '/';
+                $end = $block ? strpos($sql, '*/', $i + 2) : strpos($sql, "\n", $i);
+                $stop = $end === false ? $length : $end + ($block ? 2 : 0);
+                $body = substr($sql, $i + ($block ? 2 : 1), $stop - $i - ($block ? 4 : 1));
 
-                continue;
-            }
+                if (strpbrk($body, "'\"`$\r") !== false || ($block && str_contains($body, '/*'))) {
+                    $out .= ' ?';
 
-            if ($char === '#') {
-                $i = self::skipToLineEnd($sql, $i);
+                    break;
+                }
 
-                continue;
-            }
-
-            if ($char === '/' && $next === '*') {
-                $end = strpos($sql, '*/', $i + 2);
-                $i = $end === false ? $length : $end + 2;
-                $out .= ' ';
+                $out .= $block ? ' ' : '';
+                $i = $stop;
 
                 continue;
             }
@@ -130,7 +132,7 @@ final class SqlNormalizer
                 // column has that name, and SQL Server does with
                 // QUOTED_IDENTIFIER off: a double-quoted token is kept only
                 // when it looks like a name and stands where a name stands.
-                $out .= $char === '"' && ! self::isIdentifierToken($token, $out) ? '?' : $token;
+                $out .= $char === '"' && ! self::isIdentifierToken($token, $out, substr($sql, $i, 24)) ? '?' : $token;
 
                 continue;
             }
@@ -138,6 +140,9 @@ final class SqlNormalizer
             // Numbers that are not part of an identifier: 42, 3.14, 1e10, 0x1F, 0b101.
             if ((ctype_digit($char) || ($char === '.' && ctype_digit($next))) && ! self::endsWithIdentifier($out)) {
                 $i = self::skipNumber($sql, $i);
+                // Postgres 16 writes 1_000_000 and 0o17: whatever is glued to
+                // the number belongs to it.
+                $i += strspn($sql, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_', $i);
                 $out .= '?';
 
                 continue;
@@ -175,13 +180,26 @@ final class SqlNormalizer
     }
 
     /**
-     * Whether a double-quoted token reads as a name: a plain identifier, not
-     * after a comparison or LIKE, not inside an IN (...) or VALUES (...) list.
+     * Whether a double-quoted token reads as a name. SQLite reads "..." as a
+     * string when no column has that name, SQL Server does with
+     * QUOTED_IDENTIFIER off, so a token is kept only where Laravel's grammars
+     * put names: beside a dot, after FROM, JOIN, INTO, UPDATE, TABLE, ON, BY,
+     * AS, SELECT or DISTINCT, or right before a comparison. Anything else
+     * (a function argument, the right of an operator) is masked.
      */
-    private static function isIdentifierToken(string $token, string $out): bool
+    private static function isIdentifierToken(string $token, string $before, string $after): bool
     {
-        return preg_match('/^"[A-Za-z_][A-Za-z0-9_$]{0,63}"$/', $token) === 1
-            && preg_match('/(?:[=<>!]|\b(?:i?like|then|else|between)|\b(?:in|values)\s*\(\s*(?:\?\s*,\s*)*)\s*$/i', $out) !== 1;
+        if (preg_match('/^"[A-Za-z_][A-Za-z0-9_$]{0,63}"$/', $token) !== 1) {
+            return false;
+        }
+
+        $before = rtrim($before);
+
+        return str_ends_with($before, '.')
+            || str_starts_with(ltrim($after), '.')
+            || preg_match('/\b(?:from|join|into|update|table|on|by|as|select|distinct)$/i', $before) === 1
+            || (preg_match('/^\s*(?:[=<>!]|(?:not\s+)?(?:in|is|i?like|between)\b)/i', $after) === 1
+                && preg_match('/(?:[=<>!(,]|\b(?:i?like|between|then|else|when|case|coalesce|is|in|values|limit|offset|match|glob|regexp))$/i', $before) !== 1);
     }
 
     private static function skipToLineEnd(string $sql, int $i): int
